@@ -1,0 +1,190 @@
+name: proxyclaw-stack
+
+services:
+  postgresql:
+    image: pgvector/pgvector:pg16
+    container_name: proxyclaw-postgresql
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    environment:
+      - TZ=Asia/Shanghai
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgresql_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-proxyclaw}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    profiles:
+      - postgresql
+      - base
+
+  redis:
+    image: redis:7-alpine
+    container_name: proxyclaw-redis
+    restart: unless-stopped
+    command: >
+      sh -c '
+      if [ -n "$${REDIS_PASSWORD:-}" ]; then
+        redis-server --appendonly yes --requirepass "$${REDIS_PASSWORD}"
+      else
+        redis-server --appendonly yes
+      fi
+      '
+    env_file:
+      - ../.env
+    ports:
+      - "${REDIS_PORT:-26379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: >
+        sh -c '
+        if [ -n "$${REDIS_PASSWORD:-}" ]; then
+          redis-cli -a "$${REDIS_PASSWORD}" ping
+        else
+          redis-cli ping
+        fi
+        '
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    profiles:
+      - redis
+      - base
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+    container_name: proxyclaw-elasticsearch
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=true
+      - ELASTIC_PASSWORD=${ELASTICSEARCH_PASSWORD}
+      - "ES_JAVA_OPTS=-Xms2g -Xmx2g"
+      - cluster.name=proxyclaw-cluster
+      - node.name=proxyclaw-es-node
+    ports:
+      - "${ELASTICSEARCH_PORT:-29200}:9200"
+      - "${ELASTICSEARCH_TRANSPORT_PORT:-29300}:9300"
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f -u elastic:$${ELASTIC_PASSWORD} http://localhost:9200/_cluster/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+    profiles:
+      - elasticsearch
+      - base
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.11.0
+    container_name: proxyclaw-kibana
+    restart: unless-stopped
+    environment:
+      - ELASTICSEARCH_HOSTS=http://proxyclaw-elasticsearch:9200
+      - SERVER_NAME=kibana
+    ports:
+      - "${KIBANA_PORT:-25601}:5601"
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    profiles:
+      - kibana
+      - base
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: proxyclaw-qdrant
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    ports:
+      - "${QDRANT_PORT:-6333}:6333"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    environment:
+      - QDRANT__SERVICE__HTTP_PORT=6333
+      - QDRANT__SERVICE__GRPC_PORT=6334
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo >/dev/tcp/localhost/6333'"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    profiles:
+      - qdrant
+      - base
+
+  neo4j:
+    image: neo4j:5.22-community
+    container_name: proxyclaw-neo4j
+    restart: unless-stopped
+    environment:
+      - NEO4J_AUTH=neo4j/${NEO4J_PASSWORD}
+      - NEO4J_dbms_security_procedures_unrestricted=apoc.*
+      - NEO4J_server_memory_heap_initial__size=256m
+      - NEO4J_server_memory_heap_max__size=512m
+    ports:
+      - "${NEO4J_HTTP_PORT:-7474}:7474"
+      - "${NEO4J_BOLT_PORT:-7687}:7687"
+    volumes:
+      - neo4j_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -O- http://localhost:7474 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    profiles:
+      - neo4j
+      - base
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: proxyclaw-ollama
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    environment:
+      - OLLAMA_MODELS=/models
+      - OLLAMA_HOST=0.0.0.0
+    ports:
+      - "${OLLAMA_PORT:-21434}:11434"
+    volumes:
+      - ollama_data:/models
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    profiles:
+      - ollama
+      - base
+
+volumes:
+  postgresql_data:
+    driver: local
+  redis_data:
+    driver: local
+  es_data:
+    driver: local
+  qdrant_data:
+    driver: local
+  neo4j_data:
+    driver: local
+  ollama_data:
+    driver: local
+
+networks:
+  default:
+    name: proxyclaw-stack-network
