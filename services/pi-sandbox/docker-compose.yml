@@ -1,0 +1,34 @@
+name: proxyclaw-pi-sandbox
+
+services:
+  pi-sandbox:
+    build:
+      context: ../..
+      dockerfile: services/pi-sandbox/Dockerfile
+    container_name: proxyclaw-pi-sandbox
+    restart: unless-stopped
+    env_file:
+      - ../../.env
+    ports:
+      - "${PI_SANDBOX_PORT:-20062}:8080"
+    environment:
+      - PORT=:8080
+      - WORK_DIR=/workspace
+      - PI_CODING_AGENT_SESSION_DIR=${PI_SESSION_DIR:-/data/sessions}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
+    volumes:
+      - pi-sandbox-sessions:/data/sessions
+      - pi-sandbox-workspace:/workspace
+
+volumes:
+  pi-sandbox-sessions:
+    driver: local
+  pi-sandbox-workspace:
+    driver: local
+
+networks:
+  default:
+    name: proxyclaw-stack-network

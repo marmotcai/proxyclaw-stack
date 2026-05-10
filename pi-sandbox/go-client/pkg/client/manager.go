@@ -2,10 +2,21 @@ package client
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sync"
 	"time"
 )
+
+const maxSessionEvents = 500
+
+// SessionEventEntry 是会话内 Pi 事件的只读快照（供 HTTP 轮询等使用）。
+type SessionEventEntry struct {
+	Seq     int64           `json:"seq"`
+	Time    time.Time       `json:"time"`
+	Type    string          `json:"type"`
+	Payload json.RawMessage `json:"payload"`
+}
 
 // AgentManager 管理多个 Pi 会话
 type AgentManager struct {
@@ -34,6 +45,10 @@ type Session struct {
 	Context   context.Context
 	Cancel    context.CancelFunc
 	Metadata  map[string]interface{}
+
+	eventMu  sync.Mutex
+	eventSeq int64
+	eventLog []SessionEventEntry
 }
 
 // DefaultManagerConfig 返回默认配置
@@ -57,6 +72,50 @@ func NewAgentManager(workDir string, config *ManagerConfig) *AgentManager {
 		workDir:  workDir,
 		config:   config,
 	}
+}
+
+func (s *Session) recordEvent(ev Event) {
+	b, err := json.Marshal(ev)
+	if err != nil {
+		return
+	}
+	s.eventMu.Lock()
+	defer s.eventMu.Unlock()
+	s.eventSeq++
+	ent := SessionEventEntry{
+		Seq:     s.eventSeq,
+		Time:    time.Now(),
+		Type:    string(ev.Type),
+		Payload: b,
+	}
+	s.eventLog = append(s.eventLog, ent)
+	if len(s.eventLog) > maxSessionEvents {
+		s.eventLog = s.eventLog[len(s.eventLog)-maxSessionEvents:]
+	}
+}
+
+// EventsSince 返回 seq 大于 since 的最多 limit 条事件，以及本批最大 seq（无新事件时为 since）。
+func (s *Session) EventsSince(since int64, limit int) ([]SessionEventEntry, int64) {
+	if limit <= 0 || limit > maxSessionEvents {
+		limit = 100
+	}
+	s.eventMu.Lock()
+	defer s.eventMu.Unlock()
+	maxSeq := since
+	var out []SessionEventEntry
+	for _, e := range s.eventLog {
+		if e.Seq <= since {
+			continue
+		}
+		out = append(out, e)
+		if e.Seq > maxSeq {
+			maxSeq = e.Seq
+		}
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out, maxSeq
 }
 
 // CreateSession 创建新会话
@@ -83,13 +142,7 @@ func (m *AgentManager) CreateSession(sessionID string, args ...string) (*Session
 	// 创建上下文
 	ctx, cancel := context.WithCancel(context.Background())
 	
-	// 连接客户端
-	if err := client.Connect(ctx); err != nil {
-		cancel()
-		return nil, fmt.Errorf("failed to connect client: %w", err)
-	}
-	
-	// 创建会话
+	// 创建会话（先挂事件回调再 Connect，避免丢失早期事件）
 	session := &Session{
 		ID:        sessionID,
 		Client:    client,
@@ -99,9 +152,18 @@ func (m *AgentManager) CreateSession(sessionID string, args ...string) (*Session
 		Cancel:    cancel,
 		Metadata:  make(map[string]interface{}),
 	}
-	
+	client.SetEventHandler(func(ev Event) {
+		session.recordEvent(ev)
+	})
+
+	// 连接客户端
+	if err := client.Connect(ctx); err != nil {
+		cancel()
+		return nil, fmt.Errorf("failed to connect client: %w", err)
+	}
+
 	m.sessions[sessionID] = session
-	
+
 	// 配置会话
 	if m.config.DefaultProvider != "" && m.config.DefaultModel != "" {
 		client.SetModel(m.config.DefaultProvider, m.config.DefaultModel)

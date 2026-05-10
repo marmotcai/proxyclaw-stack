@@ -2,7 +2,7 @@
 # =============================================================================
 # ProxyClaw Stack - 统一启动脚本
 # =============================================================================
-# 支持启动通用中间件、Mem0 服务及相关插件
+# 支持启动通用中间件、Mem0、Pi Sandbox 等第三方服务
 # =============================================================================
 
 set -euo pipefail
@@ -72,9 +72,9 @@ wizard_read() {
     local input=""
 
     if [ -n "$default" ]; then
-        echo -ne "${CYAN}${prompt} [${default}]: ${NC}"
+        echo -ne "${CYAN}${prompt} [${default}]: ${NC}" >&2
     else
-        echo -ne "${CYAN}${prompt}: ${NC}"
+        echo -ne "${CYAN}${prompt}: ${NC}" >&2
     fi
 
     if [ -t 0 ]; then
@@ -92,9 +92,9 @@ wizard_confirm() {
     local input
 
     if [ "$default" = "y" ]; then
-        echo -ne "${YELLOW}${prompt} [Y/n]: ${NC}"
+        echo -ne "${YELLOW}${prompt} [Y/n]: ${NC}" >&2
     else
-        echo -ne "${YELLOW}${prompt} [y/N]: ${NC}"
+        echo -ne "${YELLOW}${prompt} [y/N]: ${NC}" >&2
     fi
 
     read -r input
@@ -142,22 +142,23 @@ init_env_file() {
         password=$(generate_password 32)
         print_info "自动生成统一密钥..."
 
-        # 使用临时文件避免变量展开问题
+        # 写入临时文件再 mv：兼容 macOS BSD sed（其 sed -i 需备份后缀参数，易误解析脚本）
         local tmp_env
         tmp_env=$(mktemp)
 
-        sed "s|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=${password}|" "${PROJECT_ROOT}/.env" > "$tmp_env"
+        sed \
+            -e "s|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=${password}|" \
+            -e "s|^PG_PASSWORD=.*|PG_PASSWORD=${password}|" \
+            -e "s|^REDIS_PASSWORD=.*|REDIS_PASSWORD=|" \
+            -e "s|^ELASTICSEARCH_PASSWORD=.*|ELASTICSEARCH_PASSWORD=${password}|" \
+            -e "s|^NEO4J_PASSWORD=.*|NEO4J_PASSWORD=${password}|" \
+            -e "s|^MEM0_ADMIN_API_KEY=.*|MEM0_ADMIN_API_KEY=mem0_${password}|" \
+            -e "s|^MEM0_JWT_SECRET=.*|MEM0_JWT_SECRET=${password}|" \
+            -e "s|^MEM0_QDRANT_API_KEY=.*|MEM0_QDRANT_API_KEY=qdrant_${password}|" \
+            -e "s|^MEM0_OPENAI_API_KEY=.*|MEM0_OPENAI_API_KEY=|" \
+            -e "s|^MEM0_POSTGRES_PASSWORD=.*|MEM0_POSTGRES_PASSWORD=${password}|" \
+            "${PROJECT_ROOT}/.env" > "$tmp_env"
         mv "$tmp_env" "${PROJECT_ROOT}/.env"
-
-        sed -i "s|^PG_PASSWORD=.*|PG_PASSWORD=${password}|" "${PROJECT_ROOT}/.env"
-        sed -i "s|^REDIS_PASSWORD=.*|REDIS_PASSWORD=|" "${PROJECT_ROOT}/.env"
-        sed -i "s|^ELASTICSEARCH_PASSWORD=.*|ELASTICSEARCH_PASSWORD=${password}|" "${PROJECT_ROOT}/.env"
-        sed -i "s|^NEO4J_PASSWORD=.*|NEO4J_PASSWORD=${password}|" "${PROJECT_ROOT}/.env"
-        sed -i "s|^MEM0_ADMIN_API_KEY=.*|MEM0_ADMIN_API_KEY=mem0_${password}|" "${PROJECT_ROOT}/.env"
-        sed -i "s|^MEM0_JWT_SECRET=.*|MEM0_JWT_SECRET=${password}|" "${PROJECT_ROOT}/.env"
-        sed -i "s|^MEM0_QDRANT_API_KEY=.*|MEM0_QDRANT_API_KEY=qdrant_${password}|" "${PROJECT_ROOT}/.env"
-        sed -i "s|^MEM0_OPENAI_API_KEY=.*|MEM0_OPENAI_API_KEY=|" "${PROJECT_ROOT}/.env"
-        sed -i "s|^MEM0_POSTGRES_PASSWORD=.*|MEM0_POSTGRES_PASSWORD=${password}|" "${PROJECT_ROOT}/.env"
 
         mkdir -p "${SERVICES_DIR}/mem0"
         cp "${PROJECT_ROOT}/.env" "${SERVICES_DIR}/mem0/.env"
@@ -186,7 +187,8 @@ run_wizard() {
     echo "  Redis:       ${REDIS_PORT:-26379}"
     echo "  Qdrant:      ${QDRANT_PORT:-6333}"
     echo "  Neo4j:       ${NEO4J_HTTP_PORT:-7474}"
-    echo "  Mem0:        ${MEM0_PORT:-3001}"
+    echo "  Mem0:        ${MEM0_PORT:-20061}"
+    echo "  Pi Sandbox:  ${PI_SANDBOX_PORT:-20062}"
     echo ""
     print_info "统一密钥已自动生成（可通过修改 .env 更换）"
 
@@ -201,13 +203,13 @@ run_wizard() {
     echo "      包含: PostgreSQL + Qdrant + Neo4j + Mem0 Server"
     echo ""
     echo "  ${GREEN}[3]${NC} 全部服务"
-    echo "      包含: 基础中间件 + Mem0"
+    echo "      包含: 基础中间件 + Mem0 + Pi Sandbox"
     echo ""
     echo "  ${GREEN}[4]${NC} 仅 PostgreSQL"
     echo "      仅启动 PostgreSQL 数据库"
     echo ""
     echo "  ${GREEN}[5]${NC} 自定义选择"
-    echo "      手动输入服务名（支持简写: pg, rd, es, qd, n4j, ol, m0）"
+    echo "      手动输入服务名（支持简写: pg, rd, es, qd, n4j, ol, m0, pi）"
     echo ""
 
     local choice
@@ -225,6 +227,7 @@ run_wizard() {
         3)
             services_to_start+=("base")
             services_to_start+=("mem0")
+            services_to_start+=("pi-sandbox")
             ;;
         4)
             services_to_start+=("postgres")
@@ -257,7 +260,10 @@ run_wizard() {
                     docker compose --env-file "${ENV_FILE}" -f "${MIDDLEWARE_DIR}/docker-compose.yml" -p proxyclaw-stack --profile base up --remove-orphans -d
                     ;;
                 mem0)
-                    docker compose --env-file "${ENV_FILE}" -f "${SERVICES_DIR}/mem0/docker-compose.yml" up --remove-orphans -d
+                    start_mem0
+                    ;;
+                pi-sandbox)
+                    start_pi_sandbox
                     ;;
                 *)
                     docker compose --env-file "${ENV_FILE}" -f "${MIDDLEWARE_DIR}/docker-compose.yml" -p proxyclaw-stack up --remove-orphans -d "$svc"
@@ -281,7 +287,7 @@ run_custom_selection() {
     echo ""
     echo -e "${CYAN}自定义服务选择${NC}"
     echo ""
-    echo "可用服务: postgres/pg, redis/rd, elasticsearch/es, qdrant/qd, neo4j/n4j, ollama/ol, mem0/m0"
+    echo "可用服务: postgres/pg, redis/rd, elasticsearch/es, qdrant/qd, neo4j/n4j, ollama/ol, mem0/m0, pi-sandbox/pi"
     echo ""
     echo "请输入要启动的服务名（空格分隔，留空结束）:"
     echo -ne "${CYAN}> ${NC}"
@@ -296,7 +302,7 @@ run_custom_selection() {
     for svc in $input; do
         local resolved
         resolved=$(resolve_service "$svc")
-        if [[ "$resolved" != "$svc" ]] || [[ "$svc" =~ ^(postgres|redis|elasticsearch|qdrant|neo4j|ollama|mem0)$ ]]; then
+        if [[ "$resolved" != "$svc" ]] || [[ "$svc" =~ ^(postgres|redis|elasticsearch|qdrant|neo4j|ollama|mem0|pi-sandbox)$ ]]; then
             selected+=("$resolved")
         else
             print_warn "未知服务: $svc"
@@ -316,12 +322,15 @@ run_custom_selection() {
     for svc in "${selected[@]}"; do
         case "$svc" in
             mem0)
-                docker compose --env-file "${ENV_FILE}" -f "${SERVICES_DIR}/mem0/docker-compose.yml" up --remove-orphans -d
+                start_mem0
+                ;;
+            pi-sandbox)
+                start_pi_sandbox
                 ;;
             *)
                 docker compose --env-file "${ENV_FILE}" -f "${MIDDLEWARE_DIR}/docker-compose.yml" -p proxyclaw-stack up --remove-orphans -d "$svc"
                 ;;
-        esac
+    esac
     done
 
     print_success "服务启动完成!"
@@ -364,6 +373,19 @@ start_mem0() {
     print_success "Mem0 服务已启动"
 }
 
+start_pi_sandbox() {
+    local compose_file="${SERVICES_DIR}/pi-sandbox/docker-compose.yml"
+
+    if [ ! -f "$compose_file" ]; then
+        print_error "未找到: $compose_file"
+        exit 1
+    fi
+
+    print_info "启动 Pi Sandbox（首次构建镜像可能较慢）..."
+    docker compose --env-file "${ENV_FILE}" -f "$compose_file" up --remove-orphans -d --build
+    print_success "Pi Sandbox 已启动（根路径与 UI: http://localhost:${PI_SANDBOX_PORT:-20062}/ 与 …/ui/，健康检查 …/api/health）"
+}
+
 stop_service() {
     local service
     service=$(resolve_service "${1:-}")
@@ -375,11 +397,15 @@ stop_service() {
         mem0)
             docker compose --env-file "${ENV_FILE}" -f "${SERVICES_DIR}/mem0/docker-compose.yml" down 2>/dev/null || true
             ;;
+        pi-sandbox)
+            docker compose --env-file "${ENV_FILE}" -f "${SERVICES_DIR}/pi-sandbox/docker-compose.yml" down 2>/dev/null || true
+            ;;
         all)
             print_info "停止所有服务..."
             # 停止 docker compose 网络（使用各自的项目名称）
             docker compose --env-file "${ENV_FILE}" -f "${MIDDLEWARE_DIR}/docker-compose.yml" -p proxyclaw-stack down --remove-orphans 2>/dev/null || true
             docker compose --env-file "${ENV_FILE}" -f "${SERVICES_DIR}/mem0/docker-compose.yml" down --remove-orphans 2>/dev/null || true
+            docker compose --env-file "${ENV_FILE}" -f "${SERVICES_DIR}/pi-sandbox/docker-compose.yml" down --remove-orphans 2>/dev/null || true
             print_success "所有服务已停止"
             ;;
         postgresql|redis|elasticsearch|qdrant|neo4j|ollama)
@@ -388,6 +414,7 @@ stop_service() {
             ;;
         *)
             print_error "未知服务: $service"
+            echo "可用: base, mem0, pi-sandbox, all, postgres, redis, elasticsearch, qdrant, neo4j, ollama"
             exit 1
             ;;
     esac
@@ -405,6 +432,9 @@ print_info "基础中间件:"
     echo ""
     print_info "Mem0 服务:"
     docker compose --env-file "${ENV_FILE}" -f "${SERVICES_DIR}/mem0/docker-compose.yml" ps 2>/dev/null || echo "  未运行"
+    echo ""
+    print_info "Pi Sandbox:"
+    docker compose --env-file "${ENV_FILE}" -f "${SERVICES_DIR}/pi-sandbox/docker-compose.yml" ps 2>/dev/null || echo "  未运行"
     echo ""
 }
 
@@ -455,6 +485,7 @@ show_help() {
     echo "  ${GREEN}start${NC} [服务]         启动服务"
     echo "  ${GREEN}start base${NC}            启动所有基础中间件"
     echo "  ${GREEN}start mem0${NC}            启动 Mem0（含依赖）"
+    echo "  ${GREEN}start pi-sandbox${NC}     启动 Pi Sandbox（Pi Agent HTTP 网关）"
     echo "  ${GREEN}start all${NC}             启动全部服务"
     echo ""
     echo -e "${CYAN}━━━ 单个服务（支持简写）━━━━${NC}"
@@ -465,8 +496,9 @@ show_help() {
     echo "  ${GREEN}start n4j${NC}   启动 Neo4j"
     echo "  ${GREEN}start ol${NC}    启动 Ollama"
     echo "  ${GREEN}start m0${NC}    启动 Mem0"
+    echo "  ${GREEN}start pi${NC}    启动 Pi Sandbox"
     echo ""
-    echo "  完整名称也可用: postgres, redis, elasticsearch, qdrant, neo4j, ollama, mem0"
+    echo "  完整名称也可用: postgres, redis, elasticsearch, qdrant, neo4j, ollama, mem0, pi-sandbox"
     echo ""
     echo -e "${CYAN}━━━ 停止服务 ━━━${NC}"
     echo "  ${GREEN}stop${NC} [服务]           停止服务"
@@ -497,8 +529,10 @@ show_help() {
     echo "    ollama         Ollama 本地模型 (端口: 11434)"
     echo ""
     echo -e "  ${YELLOW}第三方服务:${NC}"
-    echo "    mem0           Mem0 记忆服务 (端口: 3001)"
+    echo "    mem0           Mem0 记忆服务 (端口: 20061)"
     echo "                   依赖: postgresql, qdrant, neo4j"
+    echo "    pi-sandbox     Pi Agent 沙盒 HTTP 网关 (端口: 20062)"
+    echo "                   需在 .env 配置至少一个 LLM API Key（如 ANTHROPIC_API_KEY）"
     echo ""
     echo -e "${CYAN}━━━ 快速开始 ━━━${NC}"
     echo "  ${GREEN}1.${NC} 交互式向导: ${YELLOW}./start.sh w${NC}"
@@ -510,6 +544,7 @@ show_help() {
     echo "  ./start.sh w                    # 交互式向导启动（推荐）"
     echo "  ./start.sh start base           # 启动所有基础中间件"
     echo "  ./start.sh start mem0           # 启动 Mem0（含依赖）"
+    echo "  ./start.sh start pi-sandbox     # 启动 Pi Sandbox"
     echo "  ./start.sh start all            # 启动全部服务"
     echo "  ./start.sh stop all             # 停止所有服务"
     echo "  ./start.sh logs mem0            # 查看 Mem0 日志"
@@ -531,6 +566,7 @@ resolve_service() {
         n4j|neo4j|neo) echo "neo4j" ;;
         ol|ollama) echo "ollama" ;;
         m0|mem0|mem0-server) echo "mem0" ;;
+        pi|pisandbox|pisb|pi-sandbox) echo "pi-sandbox" ;;
         base|all) echo "$input" ;;
         *) echo "$input" ;;
     esac
@@ -549,10 +585,15 @@ cmd_start() {
         mem0)
             start_mem0
             ;;
+        pi-sandbox)
+            start_pi_sandbox
+            ;;
         all)
             docker compose --env-file "${ENV_FILE}" -f "${MIDDLEWARE_DIR}/docker-compose.yml" -p proxyclaw-stack --profile base up --remove-orphans -d
             sleep 5
             start_mem0
+            sleep 3
+            start_pi_sandbox
             print_success "全部服务已启动"
             ;;
         postgresql|redis|elasticsearch|qdrant|neo4j|ollama)
@@ -560,7 +601,7 @@ cmd_start() {
             ;;
         *)
             print_error "未知服务: $service"
-            echo "可用服务: postgresql/pg, redis/rd, elasticsearch/es, qdrant/qd, neo4j/n4j, ollama/ol, mem0/m0"
+            echo "可用服务: postgresql/pg, redis/rd, elasticsearch/es, qdrant/qd, neo4j/n4j, ollama/ol, mem0/m0, pi-sandbox/pi"
             exit 1
             ;;
     esac
@@ -575,12 +616,15 @@ cmd_logs() {
         mem0)
             compose_file="${SERVICES_DIR}/mem0/docker-compose.yml"
             ;;
+        pi-sandbox)
+            compose_file="${SERVICES_DIR}/pi-sandbox/docker-compose.yml"
+            ;;
         postgres|redis|elasticsearch|qdrant|neo4j|ollama)
             compose_file="${MIDDLEWARE_DIR}/docker-compose.yml"
             ;;
         *)
             print_error "请指定服务名"
-            echo "可用服务: postgres/pg, redis/rd, elasticsearch/es, qdrant/qd, neo4j/n4j, ollama/ol, mem0/m0"
+            echo "可用服务: postgres/pg, redis/rd, elasticsearch/es, qdrant/qd, neo4j/n4j, ollama/ol, mem0/m0, pi-sandbox/pi"
             exit 1
             ;;
     esac

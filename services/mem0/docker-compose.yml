@@ -8,7 +8,7 @@ services:
     env_file:
       - ../../.env
     ports:
-      - "${MEM0_PORT:-3001}:8000"
+      - "${MEM0_PORT:-20061}:8000"
     volumes:
       - mem0_history_data:/app/history
     command: ["sh", "-c", "python3 -c \"import re; f=open('/app/server/main.py','r'); c=f.read(); f.close(); c=re.sub(r'\\\"host\\\": QDRANT_HOST,', r'\\\"url\\\": f\\\"http://{QDRANT_HOST}:{QDRANT_PORT}\\\",', c); open('/app/server/main.py','w').write(c); print('Qdrant URL patched')\" && uvicorn main:app --host 0.0.0.0 --port 8000"]

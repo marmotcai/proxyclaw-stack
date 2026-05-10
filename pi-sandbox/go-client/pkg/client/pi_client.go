@@ -103,13 +103,12 @@ type Event struct {
 	Event                string              `json:"event,omitempty"`
 	Error                string              `json:"error,omitempty"`
 	
-	// Extension UI
-	ID       string   `json:"id,omitempty"`
-	Method   string   `json:"method,omitempty"`
-	Title    string   `json:"title,omitempty"`
-	Message  string   `json:"message,omitempty"`
-	Options  []string `json:"options,omitempty"`
-	Timeout  int      `json:"timeout,omitempty"`
+	// Extension UI（文案与流式事件的 message 共用 JSON 键，由 Message json.RawMessage 承载）
+	ID      string   `json:"id,omitempty"`
+	Method  string   `json:"method,omitempty"`
+	Title   string   `json:"title,omitempty"`
+	Options []string `json:"options,omitempty"`
+	Timeout int      `json:"timeout,omitempty"`
 }
 
 // PiClient 是 Pi RPC 客户端

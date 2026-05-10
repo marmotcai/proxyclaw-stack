@@ -12,9 +12,13 @@ proxyclaw-stack/
 │   ├── docker-compose.yml      # Docker 编排
 │   └── configs/                # 中间件配置
 ├── services/                   # 第三方服务
-│   └── mem0/                   # Mem0 记忆服务
+│   ├── mem0/                   # Mem0 记忆服务
+│   │   ├── docker-compose.yml
+│   │   └── entrypoint.sh
+│   └── pi-sandbox/             # Pi Sandbox（单容器：pi + pi-server）
 │       ├── docker-compose.yml
-│       └── entrypoint.sh
+│       └── Dockerfile
+├── pi-sandbox/                 # Pi 沙盒源码与独立脚本（可选本地开发）
 └── plugins/                    # 客户端插件（待迁移）
 ```
 
@@ -33,6 +37,9 @@ vim .env
 # 3. 启动 Mem0（含依赖）
 ./start.sh start mem0
 
+# （可选）启动 Pi Sandbox HTTP 网关
+# ./start.sh start pi-sandbox
+
 # 4. 查看状态
 ./start.sh status
 ```
@@ -48,13 +55,15 @@ vim .env
 | `neo4j` | 图数据库 | 无 |
 | `ollama` | 本地模型服务 | 无 |
 | `mem0` | 记忆服务 | postgresql, qdrant, neo4j |
+| `pi-sandbox` | Pi Agent HTTP 网关（`/api/*`） | 无（需 LLM API Key） |
 
 ## 启动组合
 
 ```bash
 ./start.sh start base        # 所有基础中间件
 ./start.sh start mem0        # Mem0 + 依赖
-./start.sh start all         # 全部服务
+./start.sh start pi-sandbox  # Pi Sandbox（首次会构建镜像）
+./start.sh start all         # 基础 + Mem0 + Pi Sandbox
 ```
 
 ## 文档
