@@ -157,16 +157,21 @@ services:
     environment:
       - OLLAMA_MODELS=/models
       - OLLAMA_HOST=0.0.0.0
+      - OLLAMA_DEFAULT_MODEL=${OLLAMA_DEFAULT_MODEL:-bge-m3}
+      - OLLAMA_AUTOLOAD_MODEL=${OLLAMA_AUTOLOAD_MODEL:-true}
     ports:
       - "${OLLAMA_PORT:-21434}:11434"
     volumes:
       - ollama_data:/models
+      - ./ollama-entrypoint.sh:/ollama-entrypoint.sh
+    entrypoint: ["/bin/bash", "/ollama-entrypoint.sh"]
+    depends_on: []
     healthcheck:
       test: ["CMD-SHELL", "ollama list || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 30s
+      start_period: 60s
     profiles:
       - ollama
       - base
