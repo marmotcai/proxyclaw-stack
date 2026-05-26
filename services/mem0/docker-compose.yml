@@ -11,37 +11,20 @@ services:
       - "${MEM0_PORT:-20061}:8000"
     volumes:
       - mem0_history_data:/app/history
-    command: ["sh", "-c", "python3 -c \"import re; f=open('/app/server/main.py','r'); c=f.read(); f.close(); c=re.sub(r'\\\"host\\\": QDRANT_HOST,', r'\\\"url\\\": f\\\"http://{QDRANT_HOST}:{QDRANT_PORT}\\\",', c); open('/app/server/main.py','w').write(c); print('Qdrant URL patched')\" && uvicorn main:app --host 0.0.0.0 --port 8000"]
+    command: ["sh", "-c", "sleep 15 && uvicorn main:app --host 0.0.0.0 --port 8000 --timeout-keep-alive 120"]
     environment:
-      - OPENAI_API_KEY=${MEM0_OPENAI_API_KEY:-${OPENAI_API_KEY:-}}
-      - JWT_SECRET=${MEM0_JWT_SECRET:-${MEM0_ADMIN_API_KEY}}
-      - ADMIN_API_KEY=${MEM0_ADMIN_API_KEY}
-      - AUTH_DISABLED=${MEM0_AUTH_DISABLED:-false}
-      - NEO4J_URI=bolt://proxyclaw-neo4j:7687
-      - NEO4J_USERNAME=neo4j
-      - NEO4J_PASSWORD=${NEO4J_PASSWORD}
+      - QDRANT_HOST=proxyclaw-qdrant
+      - QDRANT_PORT=${MEM0_QDRANT_PORT:-63330}
       - POSTGRES_HOST=proxyclaw-postgresql
       - POSTGRES_PORT=5432
-      - POSTGRES_DB=${POSTGRES_DB:-proxyclaw}
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-      - APP_DB_NAME=${MEM0_APP_DB_NAME:-mem0_app}
-      - POSTGRES_COLLECTION_NAME=${MEM0_POSTGRES_COLLECTION_NAME:-memories}
-      - QDRANT_HOST=proxyclaw-qdrant
-      - QDRANT_PORT=${MEM0_QDRANT_PORT:-6333}
-      - QDRANT_API_KEY=${MEM0_QDRANT_API_KEY:-}
-      - HTTPS=0
-      - LLM_PROVIDER=openai
-      - LLM_MODEL=${MEM0_OPENAI_MODEL:-gpt-4o-mini}
-      - EMBEDDER_PROVIDER=openai
-      - EMBEDDER_MODEL=${MEM0_OPENAI_EMBEDDING_MODEL:-text-embedding-3-small}
-      - OPENAI_BASE_URL=${MEM0_OPENAI_BASE_URL:-}
-      - MEM0_TELEMETRY=${MEM0_TELEMETRY:-false}
+      - NEO4J_URI=bolt://proxyclaw-neo4j:7687
+    networks:
+      - proxyclaw-stack-network
 
 volumes:
   mem0_history_data:
     driver: local
 
 networks:
-  default:
-    name: proxyclaw-stack-network
+  proxyclaw-stack-network:
+    external: true
