@@ -11,13 +11,24 @@ services:
       - "${MEM0_PORT:-20061}:8000"
     volumes:
       - mem0_history_data:/app/history
-    command: ["sh", "-c", "sleep 15 && uvicorn main:app --host 0.0.0.0 --port 8000 --timeout-keep-alive 120"]
+    # 使用 OpenAI 兼容端点连接到 Ollama（更可靠）
     environment:
       - QDRANT_HOST=proxyclaw-qdrant
-      - QDRANT_PORT=${MEM0_QDRANT_PORT:-63330}
+      - QDRANT_PORT=63330
       - POSTGRES_HOST=proxyclaw-postgresql
       - POSTGRES_PORT=5432
       - NEO4J_URI=bolt://proxyclaw-neo4j:7687
+      # 使用 OpenAI 兼容端点（Ollama 支持）
+      - LLM_PROVIDER=openai
+      - LLM_MODEL=qwen2.5:1.5b
+      - OPENAI_API_KEY=dummy
+      - OPENAI_BASE_URL=http://proxyclaw-ollama:11434/v1
+      # Embedder 也使用 OpenAI 兼容端点
+      - EMBEDDER_PROVIDER=openai
+      - EMBEDDER_MODEL=bge-m3:latest
+      - EMBEDDING_MODEL=bge-m3:latest
+      - OPENAI_EMBEDDING_API_KEY=dummy
+      - OPENAI_EMBEDDING_BASE_URL=http://proxyclaw-ollama:11434/v1
     networks:
       - proxyclaw-stack-network
 
