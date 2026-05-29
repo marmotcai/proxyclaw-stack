@@ -2,7 +2,10 @@ name: proxyclaw-mem0
 
 services:
   mem0-server:
-    image: ${MEM0_SERVER_IMAGE:-qceank/mem0-server:production}
+    image: proxyclaw-mem0:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: proxyclaw-mem0
     restart: unless-stopped
     env_file:
@@ -11,24 +14,26 @@ services:
       - "${MEM0_PORT:-20061}:8000"
     volumes:
       - mem0_history_data:/app/history
-    # 使用 OpenAI 兼容端点连接到 Ollama（更可靠）
     environment:
+      - JWT_SECRET=${MEM0_JWT_SECRET:-changeme}
+      - ADMIN_API_KEY=${MEM0_ADMIN_API_KEY:-admin}
+      - AUTH_DISABLED=${MEM0_AUTH_DISABLED:-false}
       - QDRANT_HOST=proxyclaw-qdrant
       - QDRANT_PORT=63330
       - POSTGRES_HOST=proxyclaw-postgresql
       - POSTGRES_PORT=5432
       - NEO4J_URI=bolt://proxyclaw-neo4j:7687
-      # 使用 OpenAI 兼容端点（Ollama 支持）
       - LLM_PROVIDER=openai
-      - LLM_MODEL=qwen2.5:1.5b
-      - OPENAI_API_KEY=dummy
-      - OPENAI_BASE_URL=http://proxyclaw-ollama:11434/v1
-      # Embedder 也使用 OpenAI 兼容端点
+      - LLM_MODEL=${LLM_MODEL:-qwen2.5:1.5b}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-dummy}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-http://proxyclaw-ollama:11434/v1}
       - EMBEDDER_PROVIDER=openai
-      - EMBEDDER_MODEL=bge-m3:latest
-      - EMBEDDING_MODEL=bge-m3:latest
-      - OPENAI_EMBEDDING_API_KEY=dummy
-      - OPENAI_EMBEDDING_BASE_URL=http://proxyclaw-ollama:11434/v1
+      - EMBEDDER_MODEL=${OPENAI_EMBEDDING_MODEL:-bge-m3:latest}
+      - EMBEDDING_MODEL=${OPENAI_EMBEDDING_MODEL:-bge-m3:latest}
+      - EMBEDDING_MODEL_DIMS=${MEM0_EMBEDDING_DIMS:-1024}
+      - OPENAI_EMBEDDING_API_KEY=${OPENAI_API_KEY:-dummy}
+      - OPENAI_EMBEDDING_BASE_URL=${OPENAI_BASE_URL:-http://proxyclaw-ollama:11434/v1}
+      - MEM0_TELEMETRY=false
     networks:
       - proxyclaw-stack-network
 

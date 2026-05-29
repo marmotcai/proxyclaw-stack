@@ -349,19 +349,18 @@ start_mem0() {
     fi
 
     print_info "检查 Mem0 依赖服务..."
-    local deps_needed=false
+    local deps_needed=()
 
-    for svc in postgresql qdrant neo4j; do
+    for svc in postgresql qdrant neo4j ollama; do
         local running=$(docker compose --env-file "${ENV_FILE}" -f "${MIDDLEWARE_DIR}/docker-compose.yml" -p proxyclaw-stack ps -q "$svc" 2>/dev/null)
         if [ -z "$running" ] || ! docker ps -q --filter "id=$running" --filter "status=running" | grep -q .; then
-            deps_needed=true
-            break
+            deps_needed+=("$svc")
         fi
     done
 
-    if $deps_needed; then
-        print_info "启动 Mem0 依赖: postgresql, qdrant, neo4j"
-        docker compose --env-file "${ENV_FILE}" -f "${MIDDLEWARE_DIR}/docker-compose.yml" -p proxyclaw-stack up --remove-orphans -d postgresql qdrant neo4j
+    if [ ${#deps_needed[@]} -gt 0 ]; then
+        print_info "启动 Mem0 依赖: ${deps_needed[*]}"
+        docker compose --env-file "${ENV_FILE}" -f "${MIDDLEWARE_DIR}/docker-compose.yml" -p proxyclaw-stack up --remove-orphans -d "${deps_needed[@]}"
         print_info "等待依赖服务就绪（30秒）..."
         sleep 30
     else
@@ -369,7 +368,7 @@ start_mem0() {
     fi
 
     print_info "启动 Mem0 服务..."
-    docker compose --env-file "${ENV_FILE}" -f "$compose_file" up --remove-orphans -d
+    docker compose --env-file "${ENV_FILE}" -f "$compose_file" up --remove-orphans -d --build
     print_success "Mem0 服务已启动"
 }
 
@@ -411,6 +410,51 @@ stop_service() {
         postgresql|redis|elasticsearch|qdrant|neo4j|ollama)
             docker compose --env-file "${ENV_FILE}" -f "${MIDDLEWARE_DIR}/docker-compose.yml" -p proxyclaw-stack stop "$service" 2>/dev/null || true
             print_success "服务已停止: $service"
+            ;;
+        *)
+            print_error "未知服务: $service"
+            echo "可用: base, mem0, pi-sandbox, all, postgres, redis, elasticsearch, qdrant, neo4j, ollama"
+            exit 1
+            ;;
+    esac
+}
+
+clean_service() {
+    local service
+    service=$(resolve_service "${1:-}")
+
+    case "$service" in
+        mem0)
+            print_warn "即将清理 Mem0: 停止容器、删除容器/网络、删除镜像..."
+            docker compose --env-file "${ENV_FILE}" -f "${SERVICES_DIR}/mem0/docker-compose.yml" down --remove-orphans --rmi all 2>/dev/null || true
+            # 额外清理可能残留的命名镜像
+            docker image rm proxyclaw-mem0:latest 2>/dev/null || true
+            # 清理 dangling 镜像
+            docker image prune -f --filter "label=proxyclaw=mem0" 2>/dev/null || true
+            print_success "Mem0 容器和镜像已清理"
+            ;;
+        pi-sandbox)
+            print_warn "即将清理 Pi Sandbox: 停止容器、删除容器/网络、删除镜像..."
+            docker compose --env-file "${ENV_FILE}" -f "${SERVICES_DIR}/pi-sandbox/docker-compose.yml" down --remove-orphans --rmi all 2>/dev/null || true
+            print_success "Pi Sandbox 容器和镜像已清理"
+            ;;
+        base)
+            print_warn "即将清理基础中间件: 停止容器、删除容器/网络..."
+            docker compose --env-file "${ENV_FILE}" -f "${MIDDLEWARE_DIR}/docker-compose.yml" -p proxyclaw-stack down --remove-orphans 2>/dev/null || true
+            print_success "基础中间件容器已清理（镜像保留）"
+            ;;
+        all)
+            print_warn "即将清理所有服务: 停止容器、删除容器/网络、删除服务镜像..."
+            docker compose --env-file "${ENV_FILE}" -f "${MIDDLEWARE_DIR}/docker-compose.yml" -p proxyclaw-stack down --remove-orphans 2>/dev/null || true
+            docker compose --env-file "${ENV_FILE}" -f "${SERVICES_DIR}/mem0/docker-compose.yml" down --remove-orphans --rmi all 2>/dev/null || true
+            docker compose --env-file "${ENV_FILE}" -f "${SERVICES_DIR}/pi-sandbox/docker-compose.yml" down --remove-orphans --rmi all 2>/dev/null || true
+            docker image rm proxyclaw-mem0:latest 2>/dev/null || true
+            print_success "所有服务容器和镜像已清理"
+            ;;
+        postgresql|redis|elasticsearch|qdrant|neo4j|ollama)
+            print_warn "即将清理 $service: 停止并删除容器..."
+            docker compose --env-file "${ENV_FILE}" -f "${MIDDLEWARE_DIR}/docker-compose.yml" -p proxyclaw-stack rm -fs "$service" 2>/dev/null || true
+            print_success "服务已清理: $service"
             ;;
         *)
             print_error "未知服务: $service"
@@ -501,8 +545,13 @@ show_help() {
     echo "  完整名称也可用: postgres, redis, elasticsearch, qdrant, neo4j, ollama, mem0, pi-sandbox"
     echo ""
     echo -e "${CYAN}━━━ 停止服务 ━━━${NC}"
-    echo "  ${GREEN}stop${NC} [服务]           停止服务"
+    echo "  ${GREEN}stop${NC} [服务]           停止服务（保留容器和镜像）"
     echo "  ${GREEN}stop all${NC}             停止所有服务"
+    echo ""
+    echo -e "${CYAN}━━━ 清理服务 ━━━${NC}"
+    echo "  ${GREEN}clean${NC} [服务]          清理服务（删除容器、网络和镜像）"
+    echo "  ${GREEN}clean mem0${NC}           清理 Mem0（含镜像重建）"
+    echo "  ${GREEN}clean all${NC}            清理所有服务"
     echo ""
     echo -e "${CYAN}━━━ 查看状态 ━━━${NC}"
     echo "  ${GREEN}status${NC}                查看所有服务状态"
@@ -659,6 +708,9 @@ main() {
             stop_service "$arg"
             sleep 2
             cmd_start "$arg"
+            ;;
+        clean)
+            clean_service "$arg"
             ;;
         logs)
             cmd_logs "$arg"
