@@ -16,14 +16,14 @@ services:
       - mem0_history_data:/app/history
     environment:
       # 认证
-      - JWT_SECRET=${MEM0_JWT_SECRET:-changeme}
-      - ADMIN_API_KEY=${MEM0_ADMIN_API_KEY:-admin}
+      - JWT_SECRET=${MEM0_JWT_SECRET:?error: MEM0_JWT_SECRET must be set}
+      - ADMIN_API_KEY=${MEM0_ADMIN_API_KEY:?error: MEM0_ADMIN_API_KEY must be set}
       - AUTH_DISABLED=${MEM0_AUTH_DISABLED:-false}
       # PostgreSQL（db.py 使用 APP_DB_NAME，不是 POSTGRES_DB）
       - POSTGRES_HOST=${MEM0_POSTGRES_HOST:-proxyclaw-postgresql}
       - POSTGRES_PORT=${MEM0_POSTGRES_PORT:-5432}
       - POSTGRES_USER=${POSTGRES_USER:-postgres}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?error: POSTGRES_PASSWORD must be set}
       - APP_DB_NAME=${MEM0_APP_DB_NAME:-proxyclaw}
       - POSTGRES_COLLECTION_NAME=${MEM0_POSTGRES_COLLECTION_NAME:-memories}
       # Qdrant
