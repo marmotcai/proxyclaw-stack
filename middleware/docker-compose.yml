@@ -108,15 +108,13 @@ services:
     env_file:
       - ../.env
     ports:
-      - "${QDRANT_PORT:-63330}:6333"
+      - "${QDRANT_PORT:-6333}:6333"
+      - "${QDRANT_GRPC_PORT:-6334}:6334"
     volumes:
       - qdrant_data:/qdrant/storage
-    environment:
-      - QDRANT__SERVICE__HTTP_PORT=63330
-      - QDRANT__SERVICE__GRPC_PORT=6334
     healthcheck:
-      test: ["CMD-SHELL", "bash -c 'echo >/dev/tcp/localhost/63330'"]
-      interval: 30s
+      test: ["CMD-SHELL", "bash -c 'echo >/dev/tcp/localhost/6333'"]
+      interval: 10s
       timeout: 5s
       retries: 5
       start_period: 10s
@@ -165,7 +163,6 @@ services:
       - ollama_data:/models
       - ./ollama-entrypoint.sh:/ollama-entrypoint.sh
     entrypoint: ["/bin/bash", "/ollama-entrypoint.sh"]
-    depends_on: []
     healthcheck:
       test: ["CMD-SHELL", "ollama list || exit 1"]
       interval: 10s

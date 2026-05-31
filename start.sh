@@ -54,6 +54,52 @@ load_env() {
     fi
 }
 
+# =============================================================================
+# 环境同步与验证
+# =============================================================================
+
+sync_env_to_services() {
+    # 同步根目录 .env 到各个服务目录，确保 docker-compose 加载到最新配置
+    if [ -f "${PROJECT_ROOT}/.env" ]; then
+        mkdir -p "${SERVICES_DIR}/mem0"
+        cp "${PROJECT_ROOT}/.env" "${SERVICES_DIR}/mem0/.env"
+        mkdir -p "${SERVICES_DIR}/pi-sandbox"
+        cp "${PROJECT_ROOT}/.env" "${SERVICES_DIR}/pi-sandbox/.env"
+        print_info "已同步 .env 到服务目录"
+    fi
+}
+
+# =============================================================================
+# 依赖健康检查
+# =============================================================================
+
+wait_for_dependency() {
+    local svc="$1"
+    local max_wait="${2:-120}"
+    local elapsed=0
+
+    print_info "等待 $svc 就绪（最多 ${max_wait}s）..."
+    while [ $elapsed -lt $max_wait ]; do
+        local status
+        status=$(docker compose --env-file "${ENV_FILE}" -f "${MIDDLEWARE_DIR}/docker-compose.yml" -p proxyclaw-stack ps --format json "$svc" 2>/dev/null | grep -o '"Health":"[^"]*"' | cut -d'"' -f4 || echo "")
+        if [ "$status" = "healthy" ]; then
+            print_success "$svc 已就绪 (${elapsed}s)"
+            return 0
+        fi
+        # 兼容旧版 docker compose 无 json 格式
+        local raw_status
+        raw_status=$(docker compose --env-file "${ENV_FILE}" -f "${MIDDLEWARE_DIR}/docker-compose.yml" -p proxyclaw-stack ps "$svc" 2>/dev/null | grep -o "(healthy)" || true)
+        if [ -n "$raw_status" ]; then
+            print_success "$svc 已就绪 (${elapsed}s)"
+            return 0
+        fi
+        sleep 3
+        elapsed=$((elapsed + 3))
+    done
+    print_error "$svc 等待超时 (${max_wait}s)，请检查日志: ./start.sh logs $svc"
+    return 1
+}
+
 check_dependencies() {
     local deps_ok=true
     command -v docker >/dev/null 2>&1 || { print_error "Docker 未安装"; deps_ok=false; }
@@ -115,14 +161,21 @@ wizard_step() {
 ensure_env_file() {
     if [ ! -f "${PROJECT_ROOT}/.env" ]; then
         print_warn "未找到 .env 文件"
-        echo ""
-        echo -e "启动服务需要配置文件，是否现在生成? ${CYAN}[Y/n]${NC}"
-        echo -ne "> "
-        read -r answer
-        if [[ "$answer" =~ ^[Nn] ]]; then
-            print_info "已取消"
-            exit 0
+        if [ -t 0 ] && [ -t 1 ]; then
+            # 交互式环境：询问用户
+            echo ""
+            echo -e "启动服务需要配置文件，是否现在生成? ${CYAN}[Y/n]${NC}"
+            echo -ne "> "
+            read -r answer
+            if [[ "$answer" =~ ^[Nn] ]]; then
+                print_info "已取消"
+                exit 0
+            else
+                init_env_file
+            fi
         else
+            # 非交互式环境：自动生成
+            print_info "非交互式环境，自动生成 .env..."
             init_env_file
         fi
     fi
@@ -160,8 +213,7 @@ init_env_file() {
             "${PROJECT_ROOT}/.env" > "$tmp_env"
         mv "$tmp_env" "${PROJECT_ROOT}/.env"
 
-        mkdir -p "${SERVICES_DIR}/mem0"
-        cp "${PROJECT_ROOT}/.env" "${SERVICES_DIR}/mem0/.env"
+        sync_env_to_services
 
         print_success "已创建 .env 并生成统一密钥"
     else
@@ -245,6 +297,7 @@ run_wizard() {
     wizard_step 3 "确认并启动"
 
     ensure_env_file
+    sync_env_to_services
 
     echo "将要启动的服务:"
     for svc in "${services_to_start[@]}"; do
@@ -318,6 +371,7 @@ run_custom_selection() {
     print_info "将启动: ${selected[*]}"
 
     ensure_env_file
+    sync_env_to_services
 
     for svc in "${selected[@]}"; do
         case "$svc" in
@@ -348,6 +402,8 @@ start_mem0() {
         exit 1
     fi
 
+    sync_env_to_services
+
     print_info "检查 Mem0 依赖服务..."
     local deps_needed=()
 
@@ -361,8 +417,9 @@ start_mem0() {
     if [ ${#deps_needed[@]} -gt 0 ]; then
         print_info "启动 Mem0 依赖: ${deps_needed[*]}"
         docker compose --env-file "${ENV_FILE}" -f "${MIDDLEWARE_DIR}/docker-compose.yml" -p proxyclaw-stack up --remove-orphans -d "${deps_needed[@]}"
-        print_info "等待依赖服务就绪（30秒）..."
-        sleep 30
+        for svc in "${deps_needed[@]}"; do
+            wait_for_dependency "$svc" 120 || exit 1
+        done
     else
         print_success "依赖服务已运行"
     fi
@@ -379,6 +436,8 @@ start_pi_sandbox() {
         print_error "未找到: $compose_file"
         exit 1
     fi
+
+    sync_env_to_services
 
     print_info "启动 Pi Sandbox（首次构建镜像可能较慢）..."
     docker compose --env-file "${ENV_FILE}" -f "$compose_file" up --remove-orphans -d --build
@@ -639,9 +698,10 @@ cmd_start() {
             ;;
         all)
             docker compose --env-file "${ENV_FILE}" -f "${MIDDLEWARE_DIR}/docker-compose.yml" -p proxyclaw-stack --profile base up --remove-orphans -d
-            sleep 5
+            for svc in postgresql qdrant neo4j ollama; do
+                wait_for_dependency "$svc" 120 || exit 1
+            done
             start_mem0
-            sleep 3
             start_pi_sandbox
             print_success "全部服务已启动"
             ;;

@@ -15,24 +15,35 @@ services:
     volumes:
       - mem0_history_data:/app/history
     environment:
+      # 认证
       - JWT_SECRET=${MEM0_JWT_SECRET:-changeme}
       - ADMIN_API_KEY=${MEM0_ADMIN_API_KEY:-admin}
       - AUTH_DISABLED=${MEM0_AUTH_DISABLED:-false}
-      - QDRANT_HOST=proxyclaw-qdrant
-      - QDRANT_PORT=63330
-      - POSTGRES_HOST=proxyclaw-postgresql
-      - POSTGRES_PORT=5432
+      # PostgreSQL（db.py 使用 APP_DB_NAME，不是 POSTGRES_DB）
+      - POSTGRES_HOST=${MEM0_POSTGRES_HOST:-proxyclaw-postgresql}
+      - POSTGRES_PORT=${MEM0_POSTGRES_PORT:-5432}
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+      - APP_DB_NAME=${MEM0_APP_DB_NAME:-proxyclaw}
+      - POSTGRES_COLLECTION_NAME=${MEM0_POSTGRES_COLLECTION_NAME:-memories}
+      # Qdrant
+      - QDRANT_HOST=${MEM0_QDRANT_HOST:-proxyclaw-qdrant}
+      - QDRANT_PORT=${MEM0_QDRANT_PORT:-6333}
+      # Neo4j
       - NEO4J_URI=bolt://proxyclaw-neo4j:7687
-      - LLM_PROVIDER=openai
-      - LLM_MODEL=${LLM_MODEL:-qwen2.5:1.5b}
-      - OPENAI_API_KEY=${OPENAI_API_KEY:-dummy}
-      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-http://proxyclaw-ollama:11434/v1}
-      - EMBEDDER_PROVIDER=openai
-      - EMBEDDER_MODEL=${OPENAI_EMBEDDING_MODEL:-bge-m3:latest}
-      - EMBEDDING_MODEL=${OPENAI_EMBEDDING_MODEL:-bge-m3:latest}
+      # LLM / Embedder provider：openai 或 ollama
+      - LLM_PROVIDER=${LLM_PROVIDER:-ollama}
+      - EMBEDDER_PROVIDER=${EMBEDDER_PROVIDER:-ollama}
+      # Ollama 配置（provider=ollama 时生效）
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://proxyclaw-ollama:11434}
+      # OpenAI 配置（provider=openai 时生效）
+      - OPENAI_API_KEY=${MEM0_OPENAI_API_KEY:-dummy}
+      - OPENAI_BASE_URL=${MEM0_OPENAI_BASE_URL:-http://proxyclaw-ollama:11434/v1}
+      - MEM0_DEFAULT_LLM_MODEL=${MEM0_OPENAI_MODEL:-gemma4:e2b}
+      - MEM0_DEFAULT_EMBEDDER_MODEL=${MEM0_OPENAI_EMBEDDING_MODEL:-bge-m3:latest}
+      # 向量维度（Ollama bge-m3 用 1024，OpenAI 用 1536）
       - EMBEDDING_MODEL_DIMS=${MEM0_EMBEDDING_DIMS:-1024}
-      - OPENAI_EMBEDDING_API_KEY=${OPENAI_API_KEY:-dummy}
-      - OPENAI_EMBEDDING_BASE_URL=${OPENAI_BASE_URL:-http://proxyclaw-ollama:11434/v1}
+      # 其他
       - MEM0_TELEMETRY=false
     networks:
       - proxyclaw-stack-network
