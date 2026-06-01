@@ -171,7 +171,6 @@ services:
       start_period: 60s
     profiles:
       - ollama
-      - base
 
 volumes:
   postgresql_data:

@@ -191,6 +191,14 @@ init_env_file() {
         print_info "从 .env.example 创建 .env..."
         cp "${PROJECT_ROOT}/.env.example" "${PROJECT_ROOT}/.env"
 
+        # 检测已有数据卷残留：若 PostgreSQL 数据卷存在但 .env 被重新生成，
+        # 会导致新密码与旧数据卷中存储的密码不一致，引发认证失败。
+        if docker volume inspect proxyclaw-stack_postgresql_data >/dev/null 2>&1; then
+            print_warn "检测到 PostgreSQL 数据卷已存在，但 .env 将被重新生成"
+            print_warn "这会导致新密码与数据卷中旧密码不一致！"
+            print_warn "建议先执行: ./start.sh clean all"
+        fi
+
         local password
         password=$(generate_password 32)
         print_info "自动生成统一密钥..."
@@ -198,6 +206,12 @@ init_env_file() {
         # 写入临时文件再 mv：兼容 macOS BSD sed（其 sed -i 需备份后缀参数，易误解析脚本）
         local tmp_env
         tmp_env=$(mktemp)
+
+        # 支持通过环境变量 MEM0_BIGMODEL_API_KEY 自动注入 BigModel 密钥
+        local mem0_api_key=""
+        if [ -n "${MEM0_BIGMODEL_API_KEY:-}" ]; then
+            mem0_api_key="${MEM0_BIGMODEL_API_KEY}"
+        fi
 
         sed \
             -e "s|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=${password}|" \
@@ -208,7 +222,10 @@ init_env_file() {
             -e "s|^MEM0_ADMIN_API_KEY=.*|MEM0_ADMIN_API_KEY=mem0_${password}|" \
             -e "s|^MEM0_JWT_SECRET=.*|MEM0_JWT_SECRET=${password}|" \
             -e "s|^MEM0_QDRANT_API_KEY=.*|MEM0_QDRANT_API_KEY=qdrant_${password}|" \
-            -e "s|^MEM0_OPENAI_API_KEY=.*|MEM0_OPENAI_API_KEY=|" \
+            -e "s|^MEM0_OPENAI_API_KEY=.*|MEM0_OPENAI_API_KEY=${mem0_api_key}|" \
+            -e "s|^MEM0_OPENAI_BASE_URL=.*|MEM0_OPENAI_BASE_URL=https://open.bigmodel.cn/api/paas/v4|" \
+            -e "s|^MEM0_OPENAI_MODEL=.*|MEM0_OPENAI_MODEL=glm-4-flash|" \
+            -e "s|^LLM_PROVIDER=.*|LLM_PROVIDER=openai|" \
             -e "s|^MEM0_POSTGRES_PASSWORD=.*|MEM0_POSTGRES_PASSWORD=${password}|" \
             "${PROJECT_ROOT}/.env" > "$tmp_env"
         mv "$tmp_env" "${PROJECT_ROOT}/.env"
@@ -450,7 +467,7 @@ stop_service() {
 
     case "$service" in
         base)
-            docker compose --env-file "${ENV_FILE}" -f "${MIDDLEWARE_DIR}/docker-compose.yml" -p proxyclaw-stack down 2>/dev/null || true
+            docker compose --env-file "${ENV_FILE}" -f "${MIDDLEWARE_DIR}/docker-compose.yml" -p proxyclaw-stack --profile base down 2>/dev/null || true
             ;;
         mem0)
             docker compose --env-file "${ENV_FILE}" -f "${SERVICES_DIR}/mem0/docker-compose.yml" down 2>/dev/null || true
@@ -484,31 +501,31 @@ clean_service() {
 
     case "$service" in
         mem0)
-            print_warn "即将清理 Mem0: 停止容器、删除容器/网络、删除镜像..."
-            docker compose --env-file "${ENV_FILE}" -f "${SERVICES_DIR}/mem0/docker-compose.yml" down --remove-orphans --rmi all 2>/dev/null || true
+            print_warn "即将清理 Mem0: 停止容器、删除容器/网络/数据卷、删除镜像..."
+            docker compose --env-file "${ENV_FILE}" -f "${SERVICES_DIR}/mem0/docker-compose.yml" down -v --remove-orphans --rmi all 2>/dev/null || true
             # 额外清理可能残留的命名镜像
             docker image rm proxyclaw-mem0:latest 2>/dev/null || true
             # 清理 dangling 镜像
             docker image prune -f --filter "label=proxyclaw=mem0" 2>/dev/null || true
-            print_success "Mem0 容器和镜像已清理"
+            print_success "Mem0 容器、数据卷和镜像已清理"
             ;;
         pi-sandbox)
-            print_warn "即将清理 Pi Sandbox: 停止容器、删除容器/网络、删除镜像..."
-            docker compose --env-file "${ENV_FILE}" -f "${SERVICES_DIR}/pi-sandbox/docker-compose.yml" down --remove-orphans --rmi all 2>/dev/null || true
-            print_success "Pi Sandbox 容器和镜像已清理"
+            print_warn "即将清理 Pi Sandbox: 停止容器、删除容器/网络/数据卷、删除镜像..."
+            docker compose --env-file "${ENV_FILE}" -f "${SERVICES_DIR}/pi-sandbox/docker-compose.yml" down -v --remove-orphans --rmi all 2>/dev/null || true
+            print_success "Pi Sandbox 容器、数据卷和镜像已清理"
             ;;
         base)
-            print_warn "即将清理基础中间件: 停止容器、删除容器/网络..."
-            docker compose --env-file "${ENV_FILE}" -f "${MIDDLEWARE_DIR}/docker-compose.yml" -p proxyclaw-stack down --remove-orphans 2>/dev/null || true
-            print_success "基础中间件容器已清理（镜像保留）"
+            print_warn "即将清理基础中间件: 停止容器、删除容器/网络/数据卷..."
+            docker compose --env-file "${ENV_FILE}" -f "${MIDDLEWARE_DIR}/docker-compose.yml" -p proxyclaw-stack --profile base down -v --remove-orphans 2>/dev/null || true
+            print_success "基础中间件容器与数据卷已清理（镜像保留，ollama 不受影响）"
             ;;
         all)
-            print_warn "即将清理所有服务: 停止容器、删除容器/网络、删除服务镜像..."
-            docker compose --env-file "${ENV_FILE}" -f "${MIDDLEWARE_DIR}/docker-compose.yml" -p proxyclaw-stack down --remove-orphans 2>/dev/null || true
-            docker compose --env-file "${ENV_FILE}" -f "${SERVICES_DIR}/mem0/docker-compose.yml" down --remove-orphans --rmi all 2>/dev/null || true
-            docker compose --env-file "${ENV_FILE}" -f "${SERVICES_DIR}/pi-sandbox/docker-compose.yml" down --remove-orphans --rmi all 2>/dev/null || true
+            print_warn "即将清理所有服务: 停止容器、删除容器/网络/数据卷、删除服务镜像..."
+            docker compose --env-file "${ENV_FILE}" -f "${MIDDLEWARE_DIR}/docker-compose.yml" -p proxyclaw-stack down -v --remove-orphans 2>/dev/null || true
+            docker compose --env-file "${ENV_FILE}" -f "${SERVICES_DIR}/mem0/docker-compose.yml" down -v --remove-orphans --rmi all 2>/dev/null || true
+            docker compose --env-file "${ENV_FILE}" -f "${SERVICES_DIR}/pi-sandbox/docker-compose.yml" down -v --remove-orphans --rmi all 2>/dev/null || true
             docker image rm proxyclaw-mem0:latest 2>/dev/null || true
-            print_success "所有服务容器和镜像已清理"
+            print_success "所有服务容器、数据卷和镜像已清理"
             ;;
         postgresql|redis|elasticsearch|qdrant|neo4j|ollama)
             print_warn "即将清理 $service: 停止并删除容器..."
@@ -698,6 +715,7 @@ cmd_start() {
             ;;
         all)
             docker compose --env-file "${ENV_FILE}" -f "${MIDDLEWARE_DIR}/docker-compose.yml" -p proxyclaw-stack --profile base up --remove-orphans -d
+            docker compose --env-file "${ENV_FILE}" -f "${MIDDLEWARE_DIR}/docker-compose.yml" -p proxyclaw-stack up --remove-orphans -d ollama
             for svc in postgresql qdrant neo4j ollama; do
                 wait_for_dependency "$svc" 120 || exit 1
             done
