@@ -22,6 +22,8 @@ services:
     volumes:
       - pi-sandbox-sessions:/data/sessions
       - pi-sandbox-workspace:/workspace
+      - ./pi-config/models.json:/root/.pi/agent/models.json:ro
+      - ./pi-config/settings.json:/root/.pi/agent/settings.json:ro
 
 volumes:
   pi-sandbox-sessions:
