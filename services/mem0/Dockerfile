@@ -3,7 +3,10 @@ FROM python:3.11-slim
 WORKDIR /app
 
 # 安装系统依赖（添加 sed 用于 patch）
-RUN apt-get update && apt-get install -y --no-install-recommends git libpq-dev gcc sed && rm -rf /var/lib/apt/lists/*
+# 替换为阿里云镜像源以解决 deb.debian.org 连接超时问题
+RUN sed -i 's|http://deb.debian.org/debian|http://mirrors.aliyun.com/debian|g' /etc/apt/sources.list.d/debian.sources && \
+    sed -i 's|http://security.debian.org/debian-security|http://mirrors.aliyun.com/debian-security|g' /etc/apt/sources.list.d/debian.sources && \
+    apt-get update && apt-get install -y --no-install-recommends git libpq-dev gcc sed && rm -rf /var/lib/apt/lists/*
 
 # 从 GitHub 克隆 mem0 官方源码
 RUN git clone --depth 1 https://github.com/mem0ai/mem0.git /app
