@@ -1,4 +1,4 @@
-FROM node:20-slim
+FROM docker.m.daocloud.io/library/node:20-slim
 
 # 使用国内镜像源加速构建
 RUN echo 'deb https://mirrors.aliyun.com/debian/ bookworm main contrib non-free non-free-firmware' > /etc/apt/sources.list && \
@@ -35,6 +35,6 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
 # 工作目录
 WORKDIR /workspace
 
-# 默认以 RPC 模式启动
-ENTRYPOINT ["pi", "--mode", "rpc"]
-CMD ["--no-session"]
+# 默认保持运行，供 pi-client 通过 docker exec 调用 pi
+# pi-client 中通过 exec.Command("pi", "--mode", "rpc") 启动子进程
+ENTRYPOINT ["tail", "-f", "/dev/null"]

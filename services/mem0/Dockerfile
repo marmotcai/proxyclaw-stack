@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM docker.m.daocloud.io/library/python:3.11-slim
 
 WORKDIR /app
 
@@ -6,13 +6,14 @@ WORKDIR /app
 # 替换为阿里云镜像源以解决 deb.debian.org 连接超时问题
 RUN sed -i 's|http://deb.debian.org/debian|http://mirrors.aliyun.com/debian|g' /etc/apt/sources.list.d/debian.sources && \
     sed -i 's|http://security.debian.org/debian-security|http://mirrors.aliyun.com/debian-security|g' /etc/apt/sources.list.d/debian.sources && \
-    apt-get update && apt-get install -y --no-install-recommends git libpq-dev gcc sed && rm -rf /var/lib/apt/lists/*
+    apt-get update && apt-get install -y --no-install-recommends git libpq-dev gcc sed postgresql-client && rm -rf /var/lib/apt/lists/*
 
-# 从 GitHub 克隆 mem0 官方源码
-RUN git clone --depth 1 https://github.com/mem0ai/mem0.git /app
+# 下载 mem0 官方源码
+ADD https://github.com/mem0ai/mem0/archive/refs/heads/main.tar.gz /tmp/mem0.tar.gz
+RUN tar -xzf /tmp/mem0.tar.gz -C /tmp && rm -rf /app && mv /tmp/mem0-main /app && rm /tmp/mem0.tar.gz
 
 # 安装 mem0ai 核心包（本地 editable 模式）
-RUN pip install --no-cache-dir -e .
+RUN pip install --no-cache-dir -e /app
 
 # 安装 server 专属依赖
 RUN pip install --no-cache-dir -r server/requirements.txt
@@ -99,8 +100,16 @@ RUN cat > /app/server/start.sh << 'EOF'
 #!/bin/bash
 set -e
 
+# 确保数据库存在
+PG_DB="${APP_DB_NAME:-mem0_app}"
+echo "Ensuring database ${PG_DB} exists..."
+PGPASSWORD="${POSTGRES_PASSWORD:-postgres}" psql \
+    -h "${POSTGRES_HOST:-postgres}" -p "${POSTGRES_PORT:-5432}" \
+    -U "${POSTGRES_USER:-postgres}" -d postgres \
+    -c "CREATE DATABASE \"${PG_DB}\";" 2>/dev/null || echo "Database ${PG_DB} already exists or created"
+
 # 根据环境变量动态配置 alembic.ini
-DB_URL="postgresql+psycopg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@${POSTGRES_HOST:-postgres}:${POSTGRES_PORT:-5432}/${APP_DB_NAME:-mem0_app}"
+DB_URL="postgresql+psycopg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@${POSTGRES_HOST:-postgres}:${POSTGRES_PORT:-5432}/${PG_DB}"
 sed -i "s|sqlalchemy.url = .*|sqlalchemy.url = ${DB_URL}|" /app/server/alembic.ini
 
 # 执行数据库迁移
