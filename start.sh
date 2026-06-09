@@ -772,6 +772,13 @@ start_mem0() {
     fi
 
     print_info "启动 Mem0 服务..."
+    # 清理卡在 Created 状态的同名容器，避免并行启动时 compose 报 name conflict
+    local stale_mem0
+    stale_mem0=$(docker ps -a --filter "name=^/proxyclaw-mem0$" --filter "status=created" -q 2>/dev/null || true)
+    if [ -n "$stale_mem0" ]; then
+        print_warn "发现未启动的 proxyclaw-mem0 容器，正在清理后重试..."
+        docker rm -f proxyclaw-mem0 2>/dev/null || true
+    fi
     docker compose --env-file "${ENV_FILE}" -f "$compose_file" up --remove-orphans -d --build
     print_success "Mem0 服务已启动"
 }
