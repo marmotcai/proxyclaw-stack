@@ -24,12 +24,21 @@ log_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
-# 检查 .env 文件
+# 检查 .env：优先 stack 根目录，其次服务目录
 check_env() {
+    local stack_env="${PROJECT_DIR}/../../.env"
+    if [ -f "$stack_env" ]; then
+        return 0
+    fi
     if [ ! -f "$PROJECT_DIR/.env" ]; then
-        log_warn ".env 文件不存在，从 .env.example 创建"
-        cp "$PROJECT_DIR/.env.example" "$PROJECT_DIR/.env"
-        log_warn "请编辑 .env 文件配置 API 密钥后重新运行"
+        if [ -f "$PROJECT_DIR/.env.example" ]; then
+            log_warn ".env 不存在，从 .env.example 创建（建议改用 stack 根目录 .env）"
+            cp "$PROJECT_DIR/.env.example" "$PROJECT_DIR/.env"
+        else
+            log_warn "未找到 .env，请配置 ${stack_env} 或 ${PROJECT_DIR}/.env"
+            exit 1
+        fi
+        log_warn "请编辑 .env 配置 API 密钥后重新运行"
         exit 1
     fi
 }

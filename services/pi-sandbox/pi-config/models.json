@@ -3,7 +3,7 @@
     "bigmodel": {
       "baseUrl": "https://open.bigmodel.cn/api/paas/v4",
       "api": "openai-completions",
-      "apiKey": "OPENAI_API_KEY",
+      "apiKey": "$OPENAI_API_KEY",
       "models": [
         {
           "id": "glm-4-flash",
@@ -37,6 +37,18 @@
           "contextWindow": 128000,
           "maxTokens": 16384
         }
+      ]
+    },
+    "kimi": {
+      "baseUrl": "https://api.kimi.com/coding/v1",
+      "api": "openai-completions",
+      "apiKey": "$KIMI_API_KEY",
+      "compat": {
+        "supportsDeveloperRole": false,
+        "supportsReasoningEffort": false
+      },
+      "models": [
+        { "id": "kimi-for-coding", "name": "Kimi for Coding" }
       ]
     }
   }

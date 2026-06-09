@@ -8,49 +8,37 @@ services:
       dockerfile: Dockerfile
     container_name: proxyclaw-mem0
     restart: unless-stopped
-    env_file:
-      - ../../.env
     ports:
       - "${MEM0_PORT:-20061}:8000"
     volumes:
       - mem0_history_data:/app/history
     environment:
-      # 认证
       - JWT_SECRET=${MEM0_JWT_SECRET:?error MEM0_JWT_SECRET must be set}
       - ADMIN_API_KEY=${MEM0_ADMIN_API_KEY:?error MEM0_ADMIN_API_KEY must be set}
       - AUTH_DISABLED=${MEM0_AUTH_DISABLED:-false}
-      # PostgreSQL（db.py 使用 APP_DB_NAME，不是 POSTGRES_DB）
       - POSTGRES_HOST=${MEM0_POSTGRES_HOST:-proxyclaw-postgresql}
       - POSTGRES_PORT=${MEM0_POSTGRES_PORT:-5432}
       - POSTGRES_USER=${POSTGRES_USER:-postgres}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?error POSTGRES_PASSWORD must be set}
       - APP_DB_NAME=${MEM0_APP_DB_NAME:-proxyclaw}
       - POSTGRES_COLLECTION_NAME=${MEM0_POSTGRES_COLLECTION_NAME:-memories}
-      # Qdrant
       - QDRANT_HOST=${MEM0_QDRANT_HOST:-proxyclaw-qdrant}
       - QDRANT_PORT=${MEM0_QDRANT_PORT:-6333}
-      # Neo4j
-      - NEO4J_URI=bolt://proxyclaw-neo4j:7687
-      # LLM / Embedder provider：openai 或 ollama
+      - NEO4J_URI=${MEM0_NEO4J_URI:-bolt://proxyclaw-neo4j:7687}
       - LLM_PROVIDER=${LLM_PROVIDER:-ollama}
       - EMBEDDER_PROVIDER=${EMBEDDER_PROVIDER:-ollama}
-      # Ollama 配置（provider=ollama 时生效）
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://proxyclaw-ollama:11434}
-      # OpenAI 配置（provider=openai 时生效）
       - OPENAI_API_KEY=${MEM0_OPENAI_API_KEY:-}
       - OPENAI_BASE_URL=${MEM0_OPENAI_BASE_URL:-https://open.bigmodel.cn/api/paas/v4}
       - MEM0_DEFAULT_LLM_MODEL=${MEM0_OPENAI_MODEL:-glm-4-flash}
       - MEM0_DEFAULT_EMBEDDER_MODEL=${MEM0_OPENAI_EMBEDDING_MODEL:-bge-m3:latest}
-      # 向量维度（Ollama bge-m3 用 1024，OpenAI 用 1536）
       - EMBEDDING_MODEL_DIMS=${MEM0_EMBEDDING_DIMS:-1024}
-      # 其他
       - MEM0_TELEMETRY=false
     networks:
       - proxyclaw-stack-network
 
 volumes:
   mem0_history_data:
-    driver: local
 
 networks:
   proxyclaw-stack-network:

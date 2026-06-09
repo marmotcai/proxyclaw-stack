@@ -55,18 +55,345 @@ load_env() {
 }
 
 # =============================================================================
-# 环境同步与验证
+# .env 读写与服务配置向导
 # =============================================================================
 
-sync_env_to_services() {
-    # 同步根目录 .env 到各个服务目录，确保 docker-compose 加载到最新配置
-    if [ -f "${PROJECT_ROOT}/.env" ]; then
-        mkdir -p "${SERVICES_DIR}/mem0"
-        cp "${PROJECT_ROOT}/.env" "${SERVICES_DIR}/mem0/.env"
-        mkdir -p "${SERVICES_DIR}/pi-sandbox"
-        cp "${PROJECT_ROOT}/.env" "${SERVICES_DIR}/pi-sandbox/.env"
-        print_info "已同步 .env 到服务目录"
+is_placeholder_val() {
+    local val="${1:-}"
+    case "$val" in
+        "" | __RANDOM_PASSWORD__ | '__RANDOM_PASSWORD__') return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+update_env_key() {
+    local key="$1"
+    local value="$2"
+    local tmp_env escaped
+
+    [ -f "${ENV_FILE}" ] || { print_error "未找到 ${ENV_FILE}"; exit 1; }
+
+    tmp_env=$(mktemp)
+    escaped=$(printf '%s' "$value" | sed 's/[&|]/\\&/g')
+
+    if grep -q "^[[:space:]]*${key}=" "${ENV_FILE}" 2>/dev/null; then
+        sed "s|^[[:space:]]*${key}=.*|${key}=${escaped}|" "${ENV_FILE}" > "$tmp_env"
+    else
+        cp "${ENV_FILE}" "$tmp_env"
+        printf '%s=%s\n' "$key" "$value" >> "$tmp_env"
     fi
+    mv "$tmp_env" "${ENV_FILE}"
+}
+
+wizard_read_secret() {
+    local prompt="$1"
+    local input=""
+
+    echo -ne "${CYAN}${prompt}: ${NC}" >&2
+    if [ -t 0 ]; then
+        read -rs input
+        echo "" >&2
+    else
+        read -rs input < /dev/tty 2>/dev/null || input=""
+        echo "" >&2
+    fi
+    echo "$input"
+}
+
+require_interactive_config() {
+    if [ -t 0 ] && [ -t 1 ]; then
+        return 0
+    fi
+    print_error "缺少必要配置且当前为非交互环境，请编辑 ${ENV_FILE} 后重试"
+    return 1
+}
+
+# Pi：检查是否已配置任一 LLM 密钥
+has_pi_llm_credentials() {
+    local var val
+    local pi_key_vars=(
+        ANTHROPIC_API_KEY ANTHROPIC_OAUTH_TOKEN OPENAI_API_KEY
+        GEMINI_API_KEY GOOGLE_API_KEY DEEPSEEK_API_KEY KIMI_API_KEY
+        GROQ_API_KEY OPENROUTER_API_KEY MISTRAL_API_KEY
+        AZURE_OPENAI_API_KEY AI_GATEWAY_API_KEY XAI_API_KEY
+    )
+    load_env
+    for var in "${pi_key_vars[@]}"; do
+        val="${!var:-}"
+        if ! is_placeholder_val "$val"; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+wizard_configure_pi_llm() {
+    wizard_step 1 "Pi Sandbox — LLM 配置"
+
+    echo "Pi Sandbox 需要至少一个 LLM 供应商 API Key 才能调用模型。"
+    echo ""
+    echo "  ${GREEN}[1]${NC} OpenAI          → OPENAI_API_KEY"
+    echo "  ${GREEN}[2]${NC} Kimi            → KIMI_API_KEY"
+    echo "  ${GREEN}[3]${NC} Anthropic       → ANTHROPIC_API_KEY"
+    echo "  ${GREEN}[4]${NC} DeepSeek        → DEEPSEEK_API_KEY"
+    echo "  ${GREEN}[5]${NC} Google Gemini   → GEMINI_API_KEY"
+    echo "  ${GREEN}[6]${NC} OpenRouter      → OPENROUTER_API_KEY"
+    echo "  ${GREEN}[7]${NC} 稍后手动编辑 .env 并退出"
+    echo ""
+
+    local choice key_name api_key
+    choice=$(wizard_read "请选择 LLM 供应商" "1")
+
+    case "$choice" in
+        1) key_name="OPENAI_API_KEY" ;;
+        2) key_name="KIMI_API_KEY" ;;
+        3) key_name="ANTHROPIC_API_KEY" ;;
+        4) key_name="DEEPSEEK_API_KEY" ;;
+        5) key_name="GEMINI_API_KEY" ;;
+        6) key_name="OPENROUTER_API_KEY" ;;
+        7)
+            print_info "请编辑 ${ENV_FILE} 填入 API Key 后执行: ./start.sh start pi-sandbox"
+            exit 0
+            ;;
+        *)
+            print_error "无效选项: $choice"
+            return 1
+            ;;
+    esac
+
+    api_key=$(wizard_read_secret "请输入 ${key_name}（输入不回显）")
+    if is_placeholder_val "$api_key"; then
+        print_error "${key_name} 不能为空"
+        return 1
+    fi
+
+    update_env_key "$key_name" "$api_key"
+    load_env
+    print_success "已保存 ${key_name} 到 .env"
+}
+
+ensure_pi_config() {
+    ensure_env_file
+    load_env
+
+    if has_pi_llm_credentials; then
+        return 0
+    fi
+
+    print_warn "未检测到 Pi Sandbox 的 LLM API Key"
+    require_interactive_config || exit 1
+    wizard_configure_pi_llm
+
+    if ! has_pi_llm_credentials; then
+        print_error "Pi Sandbox 仍缺少 LLM 配置，无法启动"
+        exit 1
+    fi
+}
+
+# Mem0：自动生成仍为占位符的栈内密钥
+ensure_mem0_stack_secrets() {
+    local password needs_update=false
+    load_env
+
+    if is_placeholder_val "${POSTGRES_PASSWORD:-}" \
+        || is_placeholder_val "${MEM0_JWT_SECRET:-}" \
+        || is_placeholder_val "${MEM0_ADMIN_API_KEY:-}" \
+        || is_placeholder_val "${NEO4J_PASSWORD:-}"; then
+        needs_update=true
+    fi
+
+    if ! $needs_update; then
+        return 0
+    fi
+
+    password=$(generate_password 32)
+    print_info "检测到 Mem0/中间件密钥未初始化，正在自动生成..."
+
+    is_placeholder_val "${POSTGRES_PASSWORD:-}" && update_env_key "POSTGRES_PASSWORD" "$password"
+    is_placeholder_val "${PG_PASSWORD:-}" && update_env_key "PG_PASSWORD" "$password"
+    is_placeholder_val "${NEO4J_PASSWORD:-}" && update_env_key "NEO4J_PASSWORD" "$password"
+    is_placeholder_val "${ELASTICSEARCH_PASSWORD:-}" && update_env_key "ELASTICSEARCH_PASSWORD" "$password"
+    is_placeholder_val "${MEM0_JWT_SECRET:-}" && update_env_key "MEM0_JWT_SECRET" "$password"
+    is_placeholder_val "${MEM0_ADMIN_API_KEY:-}" && update_env_key "MEM0_ADMIN_API_KEY" "mem0_${password}"
+    is_placeholder_val "${MEM0_QDRANT_API_KEY:-}" && update_env_key "MEM0_QDRANT_API_KEY" "qdrant_${password}"
+
+    load_env
+    print_success "Mem0 认证与数据库密钥已写入 .env"
+}
+
+has_mem0_llm_credentials() {
+    local llm_provider="${LLM_PROVIDER:-openai}"
+    local embedder_provider="${EMBEDDER_PROVIDER:-ollama}"
+
+    load_env
+
+    case "$llm_provider" in
+        ollama|Ollama|OLLAMA)
+            # 本地 Ollama，由 start_mem0 自动拉起 middleware
+            ;;
+        openai|OpenAI|OPENAI)
+            if is_placeholder_val "${MEM0_OPENAI_API_KEY:-}" \
+                && is_placeholder_val "${OPENAI_API_KEY:-}"; then
+                return 1
+            fi
+            ;;
+        *)
+            print_warn "未知 LLM_PROVIDER=${llm_provider}，按 openai 路径校验 API Key"
+            if is_placeholder_val "${MEM0_OPENAI_API_KEY:-}" \
+                && is_placeholder_val "${OPENAI_API_KEY:-}"; then
+                return 1
+            fi
+            ;;
+    esac
+
+    case "$embedder_provider" in
+        ollama|Ollama|OLLAMA)
+            ;;
+        openai|OpenAI|OPENAI)
+            if is_placeholder_val "${MEM0_OPENAI_API_KEY:-}" \
+                && is_placeholder_val "${OPENAI_API_KEY:-}"; then
+                return 1
+            fi
+            ;;
+    esac
+
+    return 0
+}
+
+wizard_configure_mem0_llm() {
+    wizard_step 1 "Mem0 — LLM / Embedder 配置"
+
+    echo "Mem0 需要 LLM 与嵌入模型。可选择本地 Ollama（免费）或 OpenAI 兼容 API。"
+    echo ""
+    echo "  ${GREEN}[1]${NC} 本地 Ollama（推荐开发环境）"
+    echo "      LLM + Embedder 均走 Ollama，将自动启动 proxyclaw-ollama 容器"
+    echo ""
+    echo "  ${GREEN}[2]${NC} OpenAI 兼容 API（BigModel / OpenAI / 其他）"
+    echo "      使用 MEM0_OPENAI_API_KEY + MEM0_OPENAI_BASE_URL"
+    echo ""
+    echo "  ${GREEN}[3]${NC} 混合：OpenAI 兼容 LLM + Ollama 嵌入（省 API 费用）"
+    echo ""
+    echo "  ${GREEN}[4]${NC} 稍后手动编辑 .env 并退出"
+    echo ""
+
+    local choice api_key base_url model
+    choice=$(wizard_read "请选择 Mem0 模型方案" "1")
+
+    case "$choice" in
+        1)
+            update_env_key "LLM_PROVIDER" "ollama"
+            update_env_key "EMBEDDER_PROVIDER" "ollama"
+            update_env_key "OLLAMA_BASE_URL" "http://proxyclaw-ollama:11434"
+            ;;
+        2)
+            api_key=$(wizard_read_secret "请输入 MEM0_OPENAI_API_KEY（或 OpenAI/BigModel Key）")
+            if is_placeholder_val "$api_key"; then
+                print_error "API Key 不能为空"
+                return 1
+            fi
+            base_url=$(wizard_read "API Base URL" "https://open.bigmodel.cn/api/paas/v4")
+            model=$(wizard_read "LLM 模型名" "glm-4-flash")
+            update_env_key "LLM_PROVIDER" "openai"
+            update_env_key "EMBEDDER_PROVIDER" "openai"
+            update_env_key "MEM0_OPENAI_API_KEY" "$api_key"
+            update_env_key "OPENAI_API_KEY" "$api_key"
+            update_env_key "MEM0_OPENAI_BASE_URL" "$base_url"
+            update_env_key "MEM0_OPENAI_MODEL" "$model"
+            update_env_key "MEM0_EMBEDDING_DIMS" "1536"
+            ;;
+        3)
+            api_key=$(wizard_read_secret "请输入 MEM0_OPENAI_API_KEY（LLM 用）")
+            if is_placeholder_val "$api_key"; then
+                print_error "API Key 不能为空"
+                return 1
+            fi
+            base_url=$(wizard_read "API Base URL" "https://open.bigmodel.cn/api/paas/v4")
+            model=$(wizard_read "LLM 模型名" "glm-4-flash")
+            update_env_key "LLM_PROVIDER" "openai"
+            update_env_key "EMBEDDER_PROVIDER" "ollama"
+            update_env_key "MEM0_OPENAI_API_KEY" "$api_key"
+            update_env_key "OPENAI_API_KEY" "$api_key"
+            update_env_key "MEM0_OPENAI_BASE_URL" "$base_url"
+            update_env_key "MEM0_OPENAI_MODEL" "$model"
+            update_env_key "OLLAMA_BASE_URL" "http://proxyclaw-ollama:11434"
+            update_env_key "MEM0_EMBEDDING_DIMS" "1024"
+            ;;
+        4)
+            print_info "请编辑 ${ENV_FILE} 配置 LLM_PROVIDER / MEM0_OPENAI_API_KEY 等后执行: ./start.sh start mem0"
+            exit 0
+            ;;
+        *)
+            print_error "无效选项: $choice"
+            return 1
+            ;;
+    esac
+
+    load_env
+    print_success "Mem0 LLM 配置已保存到 .env"
+}
+
+ensure_mem0_config() {
+    ensure_env_file
+    ensure_mem0_stack_secrets
+    load_env
+
+    if has_mem0_llm_credentials; then
+        print_success "Mem0 LLM 配置检查通过（LLM_PROVIDER=${LLM_PROVIDER:-openai}, EMBEDDER_PROVIDER=${EMBEDDER_PROVIDER:-ollama}）"
+        return 0
+    fi
+
+    print_warn "未检测到 Mem0 所需的 LLM API 配置"
+    require_interactive_config || exit 1
+    wizard_configure_mem0_llm
+
+    if ! has_mem0_llm_credentials; then
+        print_error "Mem0 仍缺少 LLM 配置，无法启动"
+        exit 1
+    fi
+}
+
+# =============================================================================
+# 共享网络（仅 Mem0 等需要访问 middleware 的服务使用）
+# =============================================================================
+
+# 共享网络必须由 middleware compose 创建（勿 docker network create，否则会触发 compose 警告）
+ensure_middleware_network() {
+    local network_name="proxyclaw-stack-network"
+
+    if ! docker network inspect "$network_name" >/dev/null 2>&1; then
+        return 0
+    fi
+
+    local compose_project
+    compose_project=$(docker network inspect "$network_name" --format '{{index .Labels "com.docker.compose.project"}}' 2>/dev/null || echo "")
+
+    # 旧版 start.sh 用 docker network create 手动创建的网络没有 compose 项目标签
+    if [ -n "$compose_project" ]; then
+        return 0
+    fi
+
+    local attached
+    attached=$(docker network inspect "$network_name" --format '{{len .Containers}}' 2>/dev/null || echo "0")
+
+    if [ "${attached:-0}" -gt 0 ]; then
+        print_warn "检测到旧版手动创建的 ${network_name}（无 Compose 标签），且仍有 ${attached} 个容器连接"
+        print_warn "请先执行: ./start.sh stop all"
+        print_warn "然后执行: docker network rm ${network_name}"
+        print_warn "再重新: ./start.sh start mem0"
+        return 1
+    fi
+
+    print_info "移除旧版手动创建的 ${network_name}，将由 middleware compose 重新创建..."
+    docker network rm "$network_name" >/dev/null
+}
+
+service_compose_file() {
+    local svc="$1"
+    case "$svc" in
+        mem0) echo "${SERVICES_DIR}/mem0/docker-compose.yml" ;;
+        pi-sandbox) echo "${SERVICES_DIR}/pi-sandbox/docker-compose.yml" ;;
+        *) echo "${MIDDLEWARE_DIR}/docker-compose.yml" ;;
+    esac
 }
 
 # =============================================================================
@@ -230,8 +557,6 @@ init_env_file() {
             "${PROJECT_ROOT}/.env" > "$tmp_env"
         mv "$tmp_env" "${PROJECT_ROOT}/.env"
 
-        sync_env_to_services
-
         print_success "已创建 .env 并生成统一密钥"
     else
         print_success "找到 .env 文件"
@@ -274,10 +599,13 @@ run_wizard() {
     echo "  ${GREEN}[3]${NC} 全部服务"
     echo "      包含: 基础中间件 + Mem0 + Pi Sandbox"
     echo ""
-    echo "  ${GREEN}[4]${NC} 仅 PostgreSQL"
+    echo "  ${GREEN}[4]${NC} 仅 Pi Sandbox（独立）"
+    echo "      Pi Agent HTTP 网关，无需中间件（需在 .env 配置 LLM API Key）"
+    echo ""
+    echo "  ${GREEN}[5]${NC} 仅 PostgreSQL"
     echo "      仅启动 PostgreSQL 数据库"
     echo ""
-    echo "  ${GREEN}[5]${NC} 自定义选择"
+    echo "  ${GREEN}[6]${NC} 自定义选择"
     echo "      手动输入服务名（支持简写: pg, rd, es, qd, n4j, ol, m0, pi）"
     echo ""
 
@@ -299,9 +627,12 @@ run_wizard() {
             services_to_start+=("pi-sandbox")
             ;;
         4)
-            services_to_start+=("postgres")
+            services_to_start+=("pi-sandbox")
             ;;
         5)
+            services_to_start+=("postgres")
+            ;;
+        6)
             run_custom_selection
             return
             ;;
@@ -314,7 +645,6 @@ run_wizard() {
     wizard_step 3 "确认并启动"
 
     ensure_env_file
-    sync_env_to_services
 
     echo "将要启动的服务:"
     for svc in "${services_to_start[@]}"; do
@@ -388,7 +718,6 @@ run_custom_selection() {
     print_info "将启动: ${selected[*]}"
 
     ensure_env_file
-    sync_env_to_services
 
     for svc in "${selected[@]}"; do
         case "$svc" in
@@ -419,9 +748,10 @@ start_mem0() {
         exit 1
     fi
 
-    sync_env_to_services
+    ensure_mem0_config
+    ensure_middleware_network || exit 1
 
-    print_info "检查 Mem0 依赖服务..."
+    print_info "检查 Mem0 依赖的中间件（由 start.sh 自动拉起，并创建 proxyclaw-stack-network）..."
     local deps_needed=()
 
     for svc in postgresql qdrant neo4j ollama; do
@@ -454,9 +784,9 @@ start_pi_sandbox() {
         exit 1
     fi
 
-    sync_env_to_services
+    ensure_pi_config
 
-    print_info "启动 Pi Sandbox（首次构建镜像可能较慢）..."
+    print_info "启动 Pi Sandbox（独立服务，无需 middleware 网络）..."
     docker compose --env-file "${ENV_FILE}" -f "$compose_file" up --remove-orphans -d --build
     print_success "Pi Sandbox 已启动（根路径与 UI: http://localhost:${PI_SANDBOX_PORT:-20062}/ 与 …/ui/，健康检查 …/api/health）"
 }
@@ -562,10 +892,13 @@ show_health() {
     print_info "=== 健康检查 ==="
     local failed=0
 
-    check_service_health "PostgreSQL" 5432 || failed=$((failed + 1))
-    check_service_health "Redis" 6379 || failed=$((failed + 1))
-    check_service_health "Qdrant" 6333 || failed=$((failed + 1))
-    check_service_health "Neo4j" 7474 || failed=$((failed + 1))
+    load_env
+    check_service_health "PostgreSQL" "${POSTGRES_PORT:-5432}" || failed=$((failed + 1))
+    check_service_health "Redis" "${REDIS_PORT:-26379}" || failed=$((failed + 1))
+    check_service_health "Qdrant" "${QDRANT_PORT:-6333}" || failed=$((failed + 1))
+    check_service_health "Neo4j" "${NEO4J_HTTP_PORT:-7474}" || failed=$((failed + 1))
+    check_service_health "Mem0" "${MEM0_PORT:-20061}" || failed=$((failed + 1))
+    check_service_health "Pi Sandbox" "${PI_SANDBOX_PORT:-20062}" || failed=$((failed + 1))
 
     if [ $failed -eq 0 ]; then
         print_success "所有服务健康"
@@ -630,6 +963,7 @@ show_help() {
     echo "  ${GREEN}clean all${NC}            清理所有服务"
     echo ""
     echo -e "${CYAN}━━━ 查看状态 ━━━${NC}"
+    echo "  ${GREEN}list${NC}, ${GREEN}ls${NC}              服务包一览与文档链接"
     echo "  ${GREEN}status${NC}                查看所有服务状态"
     echo "  ${GREEN}health${NC}                健康检查"
     echo ""
@@ -647,17 +981,17 @@ show_help() {
     echo ""
     echo -e "  ${YELLOW}基础中间件:${NC}"
     echo "    postgres       PostgreSQL + pgvector (端口: 5432)"
-    echo "    redis          Redis 缓存 (端口: 6379)"
-    echo "    elasticsearch  Elasticsearch 向量存储 (端口: 9200)"
+    echo "    redis          Redis 缓存 (宿主机端口: 26379)"
+    echo "    elasticsearch  Elasticsearch 向量存储 (宿主机端口: 29200)"
     echo "    qdrant         Qdrant 向量数据库 (端口: 6333)"
     echo "    neo4j          Neo4j 图数据库 (端口: 7474/7687)"
-    echo "    ollama         Ollama 本地模型 (端口: 11434)"
+    echo "    ollama         Ollama 本地模型 (宿主机端口: 21434)"
     echo ""
     echo -e "  ${YELLOW}第三方服务:${NC}"
     echo "    mem0           Mem0 记忆服务 (端口: 20061)"
     echo "                   依赖: postgresql, qdrant, neo4j"
-    echo "    pi-sandbox     Pi Agent 沙盒 HTTP 网关 (端口: 20062)"
-    echo "                   需在 .env 配置至少一个 LLM API Key（如 ANTHROPIC_API_KEY）"
+    echo "    pi-sandbox     Pi Agent 沙盒 HTTP 网关 (端口: 20062，独立部署)"
+    echo "                   需在 .env 配置至少一个 LLM API Key；详见 docs/pi-sandbox-guide.md"
     echo ""
     echo -e "${CYAN}━━━ 快速开始 ━━━${NC}"
     echo "  ${GREEN}1.${NC} 交互式向导: ${YELLOW}./start.sh w${NC}"
@@ -674,6 +1008,27 @@ show_help() {
     echo "  ./start.sh stop all             # 停止所有服务"
     echo "  ./start.sh logs mem0            # 查看 Mem0 日志"
     echo "  ./start.sh status               # 查看状态"
+    echo ""
+}
+
+show_list() {
+    echo ""
+    echo -e "${BLUE}ProxyClaw Stack 服务包（各自独立，由 start.sh 统一编排）${NC}"
+    echo ""
+    echo -e "${CYAN}middleware/${NC} — 基础中间件（PostgreSQL、Redis、Qdrant 等）"
+    echo "  启动: ./start.sh start base | ./start.sh start pg"
+    echo "  文档: docs/middleware-guide.md"
+    echo ""
+    echo -e "${CYAN}services/mem0/${NC} — Mem0 记忆服务（需 middleware 中的 PG/Qdrant/Neo4j/Ollama）"
+    echo "  启动: ./start.sh start mem0"
+    echo "  文档: docs/mem0-guide.md"
+    echo ""
+    echo -e "${CYAN}services/pi-sandbox/${NC} — Pi Agent HTTP 网关（无 stack 内依赖）"
+    echo "  启动: ./start.sh start pi-sandbox"
+    echo "  开发: cd services/pi-sandbox && ./scripts/pi-docker.sh run"
+    echo "  文档: docs/pi-sandbox-guide.md"
+    echo ""
+    echo "完整文档索引: docs/README.md"
     echo ""
 }
 
@@ -770,7 +1125,13 @@ main() {
         exit 0
     fi
 
-    check_dependencies
+    case "$command" in
+        list|ls|help|--help|-h)
+            ;;
+        *)
+            check_dependencies
+            ;;
+    esac
 
     case "$command" in
         w|wizard)
@@ -798,6 +1159,9 @@ main() {
             ;;
         health)
             show_health
+            ;;
+        list|ls)
+            show_list
             ;;
         help|--help|-h)
             show_help

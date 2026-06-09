@@ -1,7 +1,7 @@
 // 示例扩展：安全检查
 // 这个扩展会拦截危险的 bash 命令
 
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 export default function (pi: ExtensionAPI) {
   // 拦截工具调用
