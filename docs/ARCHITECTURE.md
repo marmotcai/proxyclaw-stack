@@ -13,9 +13,12 @@
 proxyclaw-stack/
 ├── start.sh                 # 统一入口
 ├── .env.example             # 全局配置模板
+├── compose/
+│   ├── fragments/           # 共享服务定义（PG/Redis/ES/Qdrant/Neo4j/Ollama/Mem0）
+│   └── overrides/           # 部署场景覆盖（stack-middleware、stack-mem0、profile-agent-memory）
 ├── docs/                    # 文档（操作手册、架构）
 ├── middleware/              # 基础中间件包（独立）
-│   ├── docker-compose.yml
+│   ├── docker-compose.yml   # include fragments + stack-middleware override
 │   └── README.md
 └── services/
     ├── mem0/                # Mem0 服务包（依赖 middleware）

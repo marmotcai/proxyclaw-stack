@@ -1,6 +1,6 @@
 # 中间件操作手册
 
-`middleware/` 提供 ProxyClaw 生态常用的基础设施，**各组件可独立启动**，无相互硬依赖。
+`middleware/` 提供 ProxyClaw 生态常用的基础设施，**各组件可独立启动**，无相互硬依赖。Compose 服务定义与 `compose/fragments/` 共享，由 `middleware/docker-compose.yml` include 后叠加 stack 专用覆盖（端口、`proxyclaw-*` 容器名、`base` profile）。
 
 ## 组件与端口
 
