@@ -39,13 +39,16 @@ cp .env.example .env
 
 ## 2. 按场景启动
 
-在 **proxyclaw 主仓库** 也可委托执行（无需 `cd proxyclaw-stack`）：
+在 **proxyclaw 主仓库** 使用同源编排库（`lib/stack.sh`，无需 `cd proxyclaw-stack`）：
 
 ```bash
 cd /path/to/proxyclaw
 ./start.sh stack start base
+./start.sh stack ensure postgresql ollama   # 仅确保依赖已运行
 ./start.sh stack status
 ```
+
+`proxyclaw-stack/start.sh` 为薄入口，与 `./start.sh stack` 加载同一套逻辑。
 
 ### 仅基础中间件
 
