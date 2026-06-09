@@ -21,6 +21,7 @@ stack_ensure_middleware() {
 
     ensure_env_file
     load_env
+    ensure_middleware_network || return 1
 
     for svc in "$@"; do
         case "$svc" in
