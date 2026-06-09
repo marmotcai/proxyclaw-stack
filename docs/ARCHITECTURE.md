@@ -3,7 +3,7 @@
 ## 1. 设计原则
 
 1. **服务包独立** — `middleware/`、`services/mem0/`、`services/pi-sandbox/` 可单独部署
-2. **统一编排** — 根目录 `start.sh` 负责启动、健康检查、日志，不嵌入业务逻辑
+2. **统一编排** — `lib/stack.sh` 负责启动、健康检查、日志；根目录 `start.sh` 为薄入口，proxyclaw `./start.sh stack` 同源加载
 3. **配置集中** — 根目录 `.env` 为默认配置源（`--env-file` 注入各 compose）
 4. **按需组网** — 仅 Mem0 等消费者加入共享网络 `proxyclaw-stack-network`
 
@@ -11,7 +11,12 @@
 
 ```
 proxyclaw-stack/
-├── start.sh                 # 统一入口
+├── start.sh                 # 薄入口 → lib/stack.sh
+├── lib/
+│   ├── stack-bootstrap.sh
+│   ├── stack-core.sh
+│   ├── stack-ensure.sh      # stack_ensure_middleware / stack_ensure_services
+│   └── stack.sh
 ├── .env.example             # 全局配置模板
 ├── compose/
 │   ├── fragments/           # 共享服务定义（PG/Redis/ES/Qdrant/Neo4j/Ollama/Mem0）
@@ -55,17 +60,31 @@ middleware/          services/mem0/          services/pi-sandbox/
 ## 4. 部署模式
 
 ```bash
-./start.sh start base          # 仅 middleware
-./start.sh start pi-sandbox    # 仅 Pi（无需 base）
-./start.sh start mem0          # Mem0 + 自动拉起所需 middleware
-./start.sh start all           # 全部
+# proxyclaw 根目录（推荐）
+./start.sh stack start base
+./start.sh stack ensure postgresql ollama
+./start.sh stack start mem0
+./start.sh stack start all
+
+# 或 proxyclaw-stack 子模块内等价命令
+./start.sh start base
 ```
+
+### 与 ProxyClaw Profile 的关系
+
+| Profile | STACK_DEPS | 说明 |
+|---------|------------|------|
+| gateway | `ollama` | 应用 SQLite，可选 stack Ollama |
+| cached | `postgresql ollama` | 应用连 stack PG |
+| agent-memory | `postgresql qdrant ollama mem0` | 应用 + Pi；中间件全走 stack |
+
+Profile `up` 调用 `stack_ensure_services`（见 `profiles/_shared/profile-stack.sh`）。详见 proxyclaw [`docs/guide/deployment-profiles-and-stack.md`](../../docs/guide/deployment-profiles-and-stack.md)。
 
 ## 5. 网络
 
 | 网络 | 创建者 | 使用者 |
 |------|--------|--------|
-| `proxyclaw-stack-network` | `start base` 或 `start.sh` 按需创建 | middleware、mem0 |
+| `proxyclaw-stack-network` | middleware compose / `ensure_middleware_network` | middleware、mem0、modular Profile 应用层 |
 | `pi-network` | `services/pi-sandbox/docker/` 开发 compose | 开发双容器 |
 | pi-sandbox 生产 compose 默认 bridge | Docker 自动 | 单容器生产 |
 

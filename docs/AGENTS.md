@@ -2,7 +2,7 @@
 
 ## 1. 项目是什么
 
-**ProxyClaw Stack** 是与 ProxyClaw 主项目配套的**可选服务集合**（中间件、Mem0、Pi Sandbox）。各服务包**相互独立**，由根目录 `start.sh` 统一编排。
+**ProxyClaw Stack** 是与 ProxyClaw 主项目配套的**可选服务集合**（中间件、Mem0、Pi Sandbox）。编排逻辑在 `lib/`；proxyclaw 根目录 **`./start.sh stack`** 与子模块 **`./start.sh`** 同源。Compose 服务定义在 `compose/fragments/`。
 
 ## 2. 服务端口（宿主机，真源见 `.env.example`）
 
@@ -30,12 +30,14 @@
 ## 4. 常用命令
 
 ```bash
-./start.sh list              # 服务包一览
-./start.sh w                 # 交互向导
-./start.sh start pi-sandbox  # 独立启动 Pi
-./start.sh start mem0        # Mem0（自动拉 middleware）
-./start.sh status
-./start.sh health
+# proxyclaw 根目录（推荐，与 profile 同源）
+./start.sh stack list
+./start.sh stack ensure postgresql ollama
+./start.sh stack start mem0
+./start.sh stack status
+
+# 子模块内等价
+cd proxyclaw-stack && ./start.sh start mem0
 ```
 
 ## 5. 约束
