@@ -39,6 +39,14 @@ cp .env.example .env
 
 ## 2. 按场景启动
 
+在 **proxyclaw 主仓库** 也可委托执行（无需 `cd proxyclaw-stack`）：
+
+```bash
+cd /path/to/proxyclaw
+./start.sh stack start base
+./start.sh stack status
+```
+
 ### 仅基础中间件
 
 ```bash

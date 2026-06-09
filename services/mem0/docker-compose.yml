@@ -1,45 +1,6 @@
 name: proxyclaw-mem0
 
-services:
-  mem0-server:
-    image: proxyclaw-mem0:latest
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: proxyclaw-mem0
-    restart: unless-stopped
-    ports:
-      - "${MEM0_PORT:-20061}:8000"
-    volumes:
-      - mem0_history_data:/app/history
-    environment:
-      - JWT_SECRET=${MEM0_JWT_SECRET:?error MEM0_JWT_SECRET must be set}
-      - ADMIN_API_KEY=${MEM0_ADMIN_API_KEY:?error MEM0_ADMIN_API_KEY must be set}
-      - AUTH_DISABLED=${MEM0_AUTH_DISABLED:-false}
-      - POSTGRES_HOST=${MEM0_POSTGRES_HOST:-proxyclaw-postgresql}
-      - POSTGRES_PORT=${MEM0_POSTGRES_PORT:-5432}
-      - POSTGRES_USER=${POSTGRES_USER:-postgres}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?error POSTGRES_PASSWORD must be set}
-      - APP_DB_NAME=${MEM0_APP_DB_NAME:-proxyclaw}
-      - POSTGRES_COLLECTION_NAME=${MEM0_POSTGRES_COLLECTION_NAME:-memories}
-      - QDRANT_HOST=${MEM0_QDRANT_HOST:-proxyclaw-qdrant}
-      - QDRANT_PORT=${MEM0_QDRANT_PORT:-6333}
-      - NEO4J_URI=${MEM0_NEO4J_URI:-bolt://proxyclaw-neo4j:7687}
-      - LLM_PROVIDER=${LLM_PROVIDER:-ollama}
-      - EMBEDDER_PROVIDER=${EMBEDDER_PROVIDER:-ollama}
-      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://proxyclaw-ollama:11434}
-      - OPENAI_API_KEY=${MEM0_OPENAI_API_KEY:-}
-      - OPENAI_BASE_URL=${MEM0_OPENAI_BASE_URL:-https://open.bigmodel.cn/api/paas/v4}
-      - MEM0_DEFAULT_LLM_MODEL=${MEM0_OPENAI_MODEL:-glm-4-flash}
-      - MEM0_DEFAULT_EMBEDDER_MODEL=${MEM0_OPENAI_EMBEDDING_MODEL:-bge-m3:latest}
-      - EMBEDDING_MODEL_DIMS=${MEM0_EMBEDDING_DIMS:-1024}
-      - MEM0_TELEMETRY=false
-    networks:
-      - proxyclaw-stack-network
-
-volumes:
-  mem0_history_data:
-
-networks:
-  proxyclaw-stack-network:
-    external: true
+include:
+  - path:
+      - ../../compose/fragments/mem0.yaml
+      - ../../compose/overrides/stack-mem0.yaml
